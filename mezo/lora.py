@@ -40,8 +40,8 @@ class LoRALinear(nn.Linear):
     ):
         nn.Linear.__init__(self, in_features, out_features, **kwargs)
 
-        self.r = r
-        self.lora_alpha = lora_alpha
+        self.r = r # the dimension of `lora_A` and `lora_B`
+        self.lora_alpha = lora_alpha # scaling parameter to control the contribution of LoRA part
         # Optional dropout
         if lora_dropout > 0.:
             self.lora_dropout = nn.Dropout(p=lora_dropout)
@@ -53,7 +53,7 @@ class LoRALinear(nn.Linear):
         self.fan_in_fan_out = fan_in_fan_out
         # Actual trainable parameters
         if r > 0:
-            self.lora_A = nn.Parameter(self.weight.new_zeros((r, in_features)))
+            self.lora_A = nn.Parameter(self.weight.new_zeros((r, in_features))) # set original value of lora matrix: 0
             self.lora_B = nn.Parameter(self.weight.new_zeros((out_features, r)))
             self.scaling = self.lora_alpha / self.r
             # Freezing the pre-trained weight matrix
@@ -73,13 +73,13 @@ class LoRALinear(nn.Linear):
         def T(w):
             return w.transpose(0, 1) if self.fan_in_fan_out else w
         nn.Linear.train(self, mode)
-        if mode:
+        if mode: # train mode
             if self.merge_weights and self.merged:
                 # Make sure that the weights are not merged
                 if self.r > 0:
                     self.weight.data -= T(self.lora_B @ self.lora_A) * self.scaling
                 self.merged = False
-        else:
+        else: # eval mode
             if self.merge_weights and not self.merged:
                 # Merge the weights and mark it
                 if self.r > 0:
@@ -94,8 +94,32 @@ class LoRALinear(nn.Linear):
             if self.r > 0:
                 result += (self.lora_dropout(x) @ self.lora_A.transpose(0, 1) @ self.lora_B.transpose(0, 1)) * self.scaling
             return result
+        # return x \cdot A^T \cdot B^T
         else:
             return F.linear(x, T(self.weight), bias=self.bias)
+
+"""
+               +-----------------+
+               |    x (input)    |
+               +--------+--------+
+                        |
+                        v
+         +--------------+-------------+
+         |          LoRALinear        |
+         | +--------+     +---------+ |
+         | | Linear | --> | LoRA    | |
+         | | Layer  |     | A * B   | |
+         | +--------+     +---------+ |
+         |       \            /       |
+         |        \          /        |
+         |         \        /         |
+         +-----------+----+-----------+
+                       |
+                       v
+                     output
+
+"""
+
 
 
 class LoRA:
