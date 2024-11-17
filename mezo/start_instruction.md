@@ -11,7 +11,7 @@ pip3 uninstall torchvision
 pip install -U scikit-learn
 pip uninstall transformers
 pip install transformers==4.28.1
-
+pip install peft
 ```
 
 **Attention: `transformers` version should be 4.28.1**
