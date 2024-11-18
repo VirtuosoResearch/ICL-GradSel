@@ -109,9 +109,6 @@ def parse_args():
     parser = HfArgumentParser(OurArguments)
     args = parser.parse_args_into_dataclasses()[0]
     print(args)
-    # print("arguments".upper().center(80, "-"))
-    # print(args)
-    # print("-" * 80)
     return args
 
 
@@ -242,6 +239,9 @@ class Framework:
         Return the prediction on the eval sample. In ICL, use train_samples as demonstrations
         """
         verbose = verbose or self.args.verbose
+        
+        verbose = False
+        
         if verbose:
             logger.info("========= Example =========")
             logger.info(f"Candidate: {eval_sample.candidates}")
@@ -263,6 +263,9 @@ class Framework:
             )
 
         outputs = []
+
+        verbose=False
+        
         if self.task.generation:
             # For generation tasks, return the autoregressively-generated text
             output_text = self.forward(encoded_candidates[0], generation=True)
