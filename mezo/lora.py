@@ -26,6 +26,25 @@ class LoRALinear(nn.Linear):
     """
     LoRA implemented in a dense layer
     From https://github.com/microsoft/LoRA/blob/main/loralib/layers.py
+    
+               +-----------------+
+               |    x (input)    |
+               +--------+--------+
+                        |
+                        v
+         +--------------+-------------+
+         |          LoRALinear        |
+         | +--------+     +---------+ |
+         | | Linear | --> | LoRA    | |
+         | | Layer  |     | A * B   | |
+         | +--------+     +---------+ |
+         |       \            /       |
+         |        \          /        |
+         |         \        /         |
+         +-----------+----+-----------+
+                       |
+                       v
+                     output
     """
     def __init__(
         self, 
@@ -97,29 +116,6 @@ class LoRALinear(nn.Linear):
         # return x \cdot A^T \cdot B^T
         else:
             return F.linear(x, T(self.weight), bias=self.bias)
-
-"""
-               +-----------------+
-               |    x (input)    |
-               +--------+--------+
-                        |
-                        v
-         +--------------+-------------+
-         |          LoRALinear        |
-         | +--------+     +---------+ |
-         | | Linear | --> | LoRA    | |
-         | | Layer  |     | A * B   | |
-         | +--------+     +---------+ |
-         |       \            /       |
-         |        \          /        |
-         |         \        /         |
-         +-----------+----+-----------+
-                       |
-                       v
-                     output
-
-"""
-
 
 
 class LoRA:

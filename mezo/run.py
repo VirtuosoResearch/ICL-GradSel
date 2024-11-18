@@ -108,7 +108,10 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser = HfArgumentParser(OurArguments)
     args = parser.parse_args_into_dataclasses()[0]
+    print(args)
+    # print("arguments".upper().center(80, "-"))
     # print(args)
+    # print("-" * 80)
     return args
 
 
