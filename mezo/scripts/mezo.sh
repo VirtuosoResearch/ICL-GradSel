@@ -1,3 +1,11 @@
+# MeZO LoRA
+MODEL=facebook/opt-1.3b 
+TASK=CB 
+MODE=lora 
+LR=5e-5 
+EPS=1e-2
+
+
 MODEL=${MODEL:-facebook/opt-1.3b}
 MODEL_NAME=(${MODEL//\// })
 MODEL_NAME="${MODEL_NAME[-1]}"
@@ -10,7 +18,7 @@ TRAIN=${TRAIN:-1000}
 DEV=${DEV:-500}
 EVAL=${EVAL:-100}
 STEPS=${STEPS:-2000}
-EVAL_STEPS=${EVAL_STEPS:-4000}
+EVAL_STEPS=${EVAL_STEPS:-400}
 
 MODE=${MODE:-ft}
 EXTRA_ARGS=""
