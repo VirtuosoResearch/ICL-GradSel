@@ -1,6 +1,8 @@
 # MeZO LoRA
 MODEL=facebook/opt-1.3b 
 TASK=CB 
+# "RTE" "CB" "SST2" "BoolQ" "WSC" "WIC" "MultiRC" "Copa" "ReCoRD" "SQuAD" "DROP"
+
 MODE=lora 
 LR=5e-5 
 EPS=1e-2
@@ -17,8 +19,8 @@ SEED=${SEED:-0}
 TRAIN=${TRAIN:-1000}
 DEV=${DEV:-500}
 EVAL=${EVAL:-100}
-STEPS=${STEPS:-2000}
-EVAL_STEPS=${EVAL_STEPS:-400}
+STEPS=${STEPS:-5000}
+EVAL_STEPS=${EVAL_STEPS:-800}
 
 MODE=${MODE:-ft}
 EXTRA_ARGS=""

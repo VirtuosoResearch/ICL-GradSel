@@ -1,13 +1,13 @@
 from setuptools import setup
 
 setup(
-    name='chain-of-thought-finetuning',
+    name='Gradient-free',
     version='0.1',
     packages=[''],
-    package_dir={'': 'src'},
+    package_dir={'': 'custom'},
     url='',
     license='',
-    author='Namgyu Ho',
-    author_email='itsnamgyu@kaist.ac.kr',
+    author='Ziniu Zhang',
+    author_email='zhang.zini@northeastern.edu',
     description=''
 )
