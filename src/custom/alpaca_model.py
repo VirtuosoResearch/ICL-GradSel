@@ -56,6 +56,7 @@ class AlpacaModel(pl.LightningModule):
         print("Creating project matrix with dimensions: ", gradient_dim, project_dim)
         if intialize_project_matrix:
             np.random.seed(run_seed)
+            print("gradient_dim: ",gradient_dim)
             self.project_matrix = (2 * np.random.randint(2, size=(gradient_dim, project_dim)) - 1).astype(float)
             self.project_matrix *= 1 / np.sqrt(project_dim)
             self.gradient_dir = f"./gradients/{gradient_dir}"

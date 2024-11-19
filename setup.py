@@ -4,7 +4,7 @@ setup(
     name='Gradient-free',
     version='0.1',
     packages=[''],
-    package_dir={'': 'custom'},
+    package_dir={'': 'src'},
     url='',
     license='',
     author='Ziniu Zhang',

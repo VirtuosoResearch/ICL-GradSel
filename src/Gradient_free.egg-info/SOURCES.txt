@@ -1,0 +1,8 @@
+README.md
+setup.py
+src/__init__.py
+src/paths.py
+src/Gradient_free.egg-info/PKG-INFO
+src/Gradient_free.egg-info/SOURCES.txt
+src/Gradient_free.egg-info/dependency_links.txt
+src/Gradient_free.egg-info/top_level.txt
