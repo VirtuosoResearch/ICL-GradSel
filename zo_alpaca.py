@@ -126,17 +126,10 @@ def main(args):
         )
 
         model.add_adapter(adapter_name="seq_bn",config=bottleneck_config)
-        
 
-
-        # print("@#$%"*10)
         for name, param in model.named_parameters():
             if 'adapter' not in name:
                 param.requires_grad = False
-            # if 'quant' in name:
-            #     print(name, param.requires_grad)
-            #     exit()
-        # print("@#$%"*10)
         
         model.set_active_adapters("seq_bn")
 
@@ -200,7 +193,6 @@ def main(args):
         state_dict = model.state_dict()
         state_dict = {k: v.clone() for k, v in state_dict.items() if "lora" or "adapter" in k}
         torch.save(state_dict, model_path)
-    
 
 
     lm = AlpacaModel(model=model, tokenizer=tokenizer, model_type=model_type,
@@ -324,22 +316,7 @@ def main(args):
         new_state_dict = generate_state_dict(lm.model, state_dict, cur_coef, device=model.device)
         pretrain_state_dict = state_dict
         finetuned_state_dict = new_state_dict
-
-        for key, value in pretrain_state_dict.items():
-            if hasattr(value, 'device'):
-                print(f"Device for pretrain_state_dict['{key}']: {value.device}")
-                break 
-        else:
-            print("No device information found in pretrain_state_dict")
-
-        for key, value in finetuned_state_dict.items():
-            if hasattr(value, 'device'):
-                print(f"Device for finetuned_state_dict['{key}']: {value.device}")
-                break
-        else:
-            print("No device information found in finetuned_state_dict")
-        
-
+    
         ''' Load the pretrained outputs '''
         pretrain_outputs = np.load(f"./gradients/{gradient_dir}/pretrain_outputs.npy")
         data_gradients = []
