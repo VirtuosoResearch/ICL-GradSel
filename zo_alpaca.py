@@ -37,16 +37,7 @@ def main(args):
         hf_key = args.model_key.replace("_", "-")
         tokenizer = AutoTokenizer.from_pretrained(hf_key)
         tokenizer.padding_side = 'right'
-        if args.use_qlora:
-            quantization_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=torch.bfloat16,
-                bnb_4bit_use_double_quant=True,
-                bnb_4bit_quant_type='nf4'
-                )
-            model = AutoModelForCausalLM.from_pretrained(hf_key, quantization_config=quantization_config, torch_dtype=torch.bfloat16, device_map={"": args.devices[0]}) #
-        else:
-            model = AutoModelForCausalLM.from_pretrained(hf_key)
+        model = AutoModelForCausalLM.from_pretrained(hf_key)
         model_type = "decoder"
         append_eos = True
     elif "flan" in model_key:
@@ -141,7 +132,7 @@ def main(args):
         norm = 0
         for key, val in state_dict.items():
             if "lora" in key or "adapter" in key:
-                print(key)
+                # print(key)
                 norm += val.clone().square().sum().item()
         return np.sqrt(norm)
 
