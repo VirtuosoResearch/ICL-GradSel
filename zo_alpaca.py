@@ -128,31 +128,18 @@ def main(args):
                         enable_checkpointing=args.enable_checkpointing, inference_mode=False
             )
 
-    def compute_norm(state_dict):
-        norm = 0
-        for key, val in state_dict.items():
-            if "lora" in key or "adapter" in key:
-                # print(key)
-                norm += val.clone().square().sum().item()
-        return np.sqrt(norm)
-
-    state_dict = {key: val.clone().to("cpu") for key, val in lm.model.state_dict().items() if 'absmax' not in key and 'quant' not in key}
-    pretrain_norm = compute_norm(state_dict)
-    print("Norm of the original model", pretrain_norm)
-
     '''First compute pretrain outputs'''
-    if args.compute_pretrained_outputs:
-        start_time = time.time()
-        if args.use_test:
-            pretrain_outputs = trainer.predict(lm, dataloaders=data_module.test_dataloader())
-        else:
-            pretrain_outputs = trainer.predict(lm, dataloaders=data_module.train_dataloader())
-        end_time = time.time()
-        print("Time for computing gradients & outputs", end_time - start_time)
-        pretrain_outputs = np.concatenate(pretrain_outputs, axis=0)
-        print("Pretrained outputs shape", pretrain_outputs.shape)
-        np.save(f"./gradients/{gradient_dir}/pretrain_outputs.npy", pretrain_outputs)
-    
+    start_time = time.time()
+    if args.use_test:
+        pretrain_outputs = trainer.predict(lm, dataloaders=data_module.test_dataloader())
+    else:
+        pretrain_outputs = trainer.predict(lm, dataloaders=data_module.train_dataloader())
+    end_time = time.time()
+    print("Time for computing gradients & outputs", end_time - start_time)
+    pretrain_outputs = np.concatenate(pretrain_outputs, axis=0)
+    print("Pretrained outputs shape", pretrain_outputs.shape)
+    np.save(f"./gradients/{gradient_dir}/pretrain_outputs.npy", pretrain_outputs)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
