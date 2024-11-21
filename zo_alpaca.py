@@ -119,7 +119,7 @@ def main(args):
             print("Loaded model from checkpoint from ", load_model_dir)
     
 
-    args.accumulate = 1; args.epochs = 0; args.enable_checkpointing = True
+    args.accumulate = 1; args.epochs = 20; args.enable_checkpointing = True
     default_root_dir = "external_lightning_logs/" + save_name + "/eval_output_approx/" # This is for creating a new directory
 
     trainer = pl.Trainer(accelerator="gpu", devices=args.devices, strategy=args.strategy,
@@ -127,7 +127,9 @@ def main(args):
                         accumulate_grad_batches=args.accumulate, precision=args.precision,
                         enable_checkpointing=args.enable_checkpointing, inference_mode=False
             )
-
+    
+    trainer.fit(lm, datamodule=data_module)
+    
     '''First compute pretrain outputs'''
     start_time = time.time()
     if args.use_test:
