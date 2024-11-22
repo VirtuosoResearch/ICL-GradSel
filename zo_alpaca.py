@@ -60,12 +60,17 @@ def zero_order_train_step(model, loss_fn, x, y, epsilon=0.01, num_samples=10):
 
     outputs = model(x)
     logits = outputs.logits
-
     logits.backward(expanded_gradient) 
-
     optimizer.step() 
 
-    return baseline_loss
+    model.eval()
+    with torch.no_grad():
+        outputs = model(x)
+        logits = outputs.logits
+        train_loss = loss_fn(logits.view(-1, logits.size(-1)), y.view(-1))
+
+
+    return train_loss
 
 
 def main(args):
@@ -150,12 +155,13 @@ def main(args):
     loss_fn = torch.nn.CrossEntropyLoss()
 
     for epoch in range(args.epochs):
+        cnt_batch = 0
         for batch in data_loader:
             x, y = batch["input_ids"], batch["labels"]
             x, y = x.to(model.device), y.to(model.device)
-
+            cnt_batch += 1
             loss = zero_order_train_step(model, loss_fn, x, y, epsilon=0.01, num_samples=10)
-            print(f"Epoch {epoch}, Loss: {loss.item()}")
+            print(f"Epoch {epoch}, Batch {cnt_batch}, Loss: {loss.item()}")
 
     print("Zero-order training complete.")
 
