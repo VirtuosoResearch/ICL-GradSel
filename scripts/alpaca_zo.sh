@@ -17,4 +17,4 @@ python zo_alpaca.py \
     --batch_size $bs --max_length 256 --project_gradients --project_dimension $pd \
     --devices $dev --strategy auto --compute_pretrained_outputs --save_name $sv\
     --downsample 400 --num_batches_gradients 1000\
-    --train_adapter --reduction_factor $rf
+    --train_adapter --reduction_factor $rf --epochs 1

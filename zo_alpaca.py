@@ -1,6 +1,7 @@
 import argparse
 import logging
 import os
+from tqdm import tqdm
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -20,9 +21,6 @@ logging.basicConfig(level=logging.INFO)
 torch.set_float32_matmul_precision("high")
 
 def zero_order_train_step(model, loss_fn, x, y, epsilon=0.01, num_samples=10):
-    """
-    Perform a single training step using Zero-Order Optimization, focusing on adapter weights.
-    """
     model.eval()
 
     with torch.no_grad():
@@ -155,13 +153,16 @@ def main(args):
     loss_fn = torch.nn.CrossEntropyLoss()
 
     for epoch in range(args.epochs):
+        print(f"Epoch {epoch + 1}/{args.epochs}")
         cnt_batch = 0
+        data_loader = tqdm(data_module.train_dataloader(), desc=f"Training Epoch {epoch+1}")
         for batch in data_loader:
             x, y = batch["input_ids"], batch["labels"]
             x, y = x.to(model.device), y.to(model.device)
             cnt_batch += 1
             loss = zero_order_train_step(model, loss_fn, x, y, epsilon=0.01, num_samples=10)
-            print(f"Epoch {epoch}, Batch {cnt_batch}, Loss: {loss.item()}")
+            # print(f"Epoch {epoch}, Batch {cnt_batch}, Loss: {loss.item()}")
+            data_loader.set_postfix(loss=loss.item())
 
     print("Zero-order training complete.")
 
