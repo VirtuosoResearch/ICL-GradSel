@@ -16,5 +16,5 @@ python zo_alpaca.py \
     --model_key $hf_key --lora_rank 4 --lora_alpha 32 --precision "bf16-true"\
     --batch_size $bs --max_length 256 --project_gradients --project_dimension $pd \
     --devices $dev --strategy auto --compute_pretrained_outputs --save_name $sv\
-    --downsample 1024 --num_batches_gradients 1000\
-    --train_adapter --reduction_factor $rf --epochs 1 --loss_file "loss3.log"
+    --downsample 1000 --num_batches_gradients 1000\
+    --train_adapter --reduction_factor $rf --epochs 1 --loss_file "loss_1k_8.log" --num_samples 10
