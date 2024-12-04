@@ -20,7 +20,7 @@ from adapters import AutoAdapterModel, DoubleSeqBnConfig
 logging.basicConfig(level=logging.INFO)
 torch.set_float32_matmul_precision("high")
 
-def zero_order_train_step(model, loss_fn, x, y, epsilon=0.01, num_samples=10):
+def zero_order_train_step(model, loss_fn, x, y, epsilon=0.01, num_samples=5):
     model.eval()
 
     with torch.no_grad():
@@ -66,8 +66,7 @@ def zero_order_train_step(model, loss_fn, x, y, epsilon=0.01, num_samples=10):
         outputs = model(x)
         logits = outputs.logits
         train_loss = loss_fn(logits.view(-1, logits.size(-1)), y.view(-1))
-
-
+        
     return train_loss
 
 
@@ -149,7 +148,7 @@ def main(args):
             print("Loaded model from checkpoint from ", load_model_dir)
 
     # Replace Trainer with zero-order optimization
-    log_dir = "./loss_result/loss.log"
+    log_dir = "./loss_result/"+args.loss_file
     with open(log_dir, "w") as log_file:
         data_loader = data_module.train_dataloader()
         loss_fn = torch.nn.CrossEntropyLoss()
@@ -157,12 +156,12 @@ def main(args):
         for epoch in range(args.epochs):
             print(f"Epoch {epoch + 1}/{args.epochs}")
             cnt_batch = 0
-            data_loader = tqdm(data_module.train_dataloader(), desc=f"Training Epoch {epoch+1}")
+            data_loader = tqdm(data_module.train_dataloader(), desc=f"Epoch {epoch+1}")
             for batch in data_loader:
                 x, y = batch["input_ids"], batch["labels"]
                 x, y = x.to(model.device), y.to(model.device)
                 cnt_batch += 1
-                loss = zero_order_train_step(model, loss_fn, x, y, epsilon=0.01, num_samples=10)
+                loss = zero_order_train_step(model, loss_fn, x, y, epsilon=0.01, num_samples=5)
                 # print(f"Epoch {epoch}, Batch {cnt_batch}, Loss: {loss.item()}")
                 data_loader.set_postfix(loss=loss.item())
                 log_file.write(f"Epoch {epoch+1}, Batch {cnt_batch}, loss: {loss.item()}\n")
@@ -211,6 +210,7 @@ if __name__ == "__main__":
     parser.add_argument("--use_qadapter", action= "store_true")
     
     parser.add_argument("--epochs", type=int, default=5)
+    parser.add_argument("--loss_file",type=str,default="loss.log")
 
     args = parser.parse_args()
     main(args)

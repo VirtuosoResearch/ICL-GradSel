@@ -1,6 +1,6 @@
 hf_key="meta-llama/Llama-3.2-1B"
 sv="fast_approximation_gradients_double_adapter_quant2"
-bs=4
+bs=8
 dev=1
 pd=50
 rf=128
@@ -16,5 +16,5 @@ python zo_alpaca.py \
     --model_key $hf_key --lora_rank 4 --lora_alpha 32 --precision "bf16-true"\
     --batch_size $bs --max_length 256 --project_gradients --project_dimension $pd \
     --devices $dev --strategy auto --compute_pretrained_outputs --save_name $sv\
-    --downsample 400 --num_batches_gradients 1000\
-    --train_adapter --reduction_factor $rf --epochs 1
+    --downsample 1024 --num_batches_gradients 1000\
+    --train_adapter --reduction_factor $rf --epochs 1 --loss_file "loss3.log"
