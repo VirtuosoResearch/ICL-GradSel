@@ -20,9 +20,11 @@ from adapters import AutoAdapterModel, DoubleSeqBnConfig
 logging.basicConfig(level=logging.INFO)
 torch.set_float32_matmul_precision("high")
 
-def zero_order_train_step(model, loss_fn, x, y, num_samples, epsilon=0.01):
+def zero_order_train_step(args, model, loss_fn, x, y, num_samples, epsilon=0.01):
     model.eval()
 
+    lr = args.lr
+    
     with torch.no_grad():
         outputs = model(x)
         logits = outputs.logits
@@ -53,7 +55,7 @@ def zero_order_train_step(model, loss_fn, x, y, num_samples, epsilon=0.01):
     expanded_gradient = avg_gradient.unsqueeze(-1).expand(-1, -1, logits.size(-1))
 
     model.train()
-    optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), lr=0.001)
+    optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
     optimizer.zero_grad()
 
     outputs = model(x)
@@ -139,13 +141,6 @@ def main(args):
 
     data_module.setup(stage="fit")
 
-    save_name = "Alpaca_{}".format(model_key) + \
-                ("_lora_r_{}".format(args.lora_rank) if args.train_lora else "") + \
-                ("_{}".format(args.save_name) if args.save_name != "none" else "")
-
-    gradient_dir = save_name + f"_dim_{args.project_dimension}_run_{args.run}" + ("_pretrained" if args.load_model_dir is None else "_pretrained")
-    print("Gradient directory", gradient_dir)
-
     # Replace Trainer with zero-order optimization
     log_dir = "./loss_result/"+args.loss_file
     with open(log_dir, "w") as log_file:
@@ -160,8 +155,7 @@ def main(args):
                 x, y = batch["input_ids"], batch["labels"]
                 x, y = x.to(model.device), y.to(model.device)
                 cnt_batch += 1
-                loss = zero_order_train_step(model, loss_fn, x, y, args.num_samples, epsilon=0.01)
-                # print(f"Epoch {epoch}, Batch {cnt_batch}, Loss: {loss.item()}")
+                loss = zero_order_train_step(args, model, loss_fn, x, y, args.num_samples, epsilon=0.01)
                 data_loader.set_postfix(loss=loss.item())
                 log_file.write(f"Epoch {epoch+1}, Batch {cnt_batch}, loss: {loss.item()}\n")
                 log_file.flush()
@@ -178,25 +172,17 @@ if __name__ == "__main__":
     parser.add_argument("--precision", type=str, default="32")
     parser.add_argument("--strategy", type=str, default="auto")
     parser.add_argument("--devices", type=int, nargs="+", default=[0, 1])
-    parser.add_argument("--use_qlora", action="store_true")
 
     parser.add_argument("--lr", type=float, default=5e-5)
-    parser.add_argument("--weight_decay", type=float, default=1e-4)
     parser.add_argument("--max_length", type=int, default=256)
     parser.add_argument("--use_wandb", action="store_true")
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--load_model_dir", type=str, default=None)
 
-    parser.add_argument("--train_instruction", action="store_true")
-    parser.add_argument("--load_truthfulqa", action="store_true")
-    parser.add_argument("--load_toxigen", action="store_true")
-
     parser.add_argument("--compute_pretrained_outputs", action="store_true")
     parser.add_argument("--downsample", type=int, default=None)
     parser.add_argument("--num_batches_gradients", type=int, default=100)
     parser.add_argument("--run", type=int, default=0)
-    parser.add_argument("--project_gradients", action="store_true")
-    parser.add_argument("--project_dimension", type=int, default=200)
     parser.add_argument("--abs_scale", type=float, default=-1.0)
     parser.add_argument("--scale", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=0)
