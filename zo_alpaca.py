@@ -53,7 +53,7 @@ def zero_order_train_step(model, loss_fn, x, y, num_samples, epsilon=0.01):
     expanded_gradient = avg_gradient.unsqueeze(-1).expand(-1, -1, logits.size(-1))
 
     model.train()
-    optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), lr=0.01)
+    optimizer = torch.optim.SGD(filter(lambda p: p.requires_grad, model.parameters()), lr=0.001)
     optimizer.zero_grad()
 
     outputs = model(x)
@@ -74,6 +74,8 @@ def main(args):
     print("arguments".upper().center(80, "-"))
     print(args)
     print("-" * 80)
+    device = torch.device(f"cuda:{args.devices[0]}")
+    print("device: ",device)
 
     model_key = args.model_key.replace("/", "-")
     if "gpt" in args.model_key or "Llama" in model_key or "bloomz" in model_key or "gemma" in model_key or "Mistral" in model_key:
@@ -105,6 +107,8 @@ def main(args):
 
         model.add_adapter(adapter_name="seq_bn", config=bottleneck_config)
 
+        model.to(device)
+
         for name, param in model.named_parameters():
             if 'adapter' not in name:
                 param.requires_grad = False
@@ -116,6 +120,8 @@ def main(args):
         all_params_count = sum(p.numel() for p in model.parameters())
 
         print(f"Trainable parameters: {trainable_params_count} || All parameters: {all_params_count} || ratio: {trainable_params_count / all_params_count}")
+        
+        print("model.device: ",model.device)
 
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -139,13 +145,6 @@ def main(args):
 
     gradient_dir = save_name + f"_dim_{args.project_dimension}_run_{args.run}" + ("_pretrained" if args.load_model_dir is None else "_pretrained")
     print("Gradient directory", gradient_dir)
-
-    if args.load_model_dir is not None:
-        load_model_dir = f"./exported_model/{args.load_model_dir}.pt"
-        if os.path.exists(load_model_dir):
-            state_dict = torch.load(load_model_dir, map_location=model.device)
-            model.load_state_dict(state_dict, strict=False)
-            print("Loaded model from checkpoint from ", load_model_dir)
 
     # Replace Trainer with zero-order optimization
     log_dir = "./loss_result/"+args.loss_file
