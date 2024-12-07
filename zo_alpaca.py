@@ -24,11 +24,7 @@ def zero_order_train_step(args, model, loss_fn, x, y, num_samples, epsilon=0.01)
     model.eval()
 
     lr = args.lr
-    
-    with torch.no_grad():
-        outputs = model(x)
-        logits = outputs.logits
-        baseline_loss = loss_fn(logits.view(-1, logits.size(-1)), y.view(-1))
+
 
     approx_gradients = []
     for _ in range(num_samples):
