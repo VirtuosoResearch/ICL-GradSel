@@ -20,7 +20,7 @@ from adapters import AutoAdapterModel, DoubleSeqBnConfig
 logging.basicConfig(level=logging.INFO)
 torch.set_float32_matmul_precision("high")
 
-def zero_order_train_step(args, model, loss_fn, x, y, num_samples, epsilon=0.01):
+def train_step(args, model, loss_fn, x, y, epsilon=0.01):
     model.eval()
 
     lr = args.lr
@@ -31,7 +31,8 @@ def zero_order_train_step(args, model, loss_fn, x, y, num_samples, epsilon=0.01)
 
     outputs = model(x)
     logits = outputs.logits
-    logits.backward() 
+    loss = loss_fn(logits.view(-1, logits.size(-1)), y.view(-1))
+    loss.backward()
     optimizer.step() 
 
     model.eval()
@@ -126,7 +127,7 @@ def main(args):
                 x, y = batch["input_ids"], batch["labels"]
                 x, y = x.to(model.device), y.to(model.device)
                 cnt_batch += 1
-                loss = zero_order_train_step(args, model, loss_fn, x, y, args.num_samples, epsilon=0.01)
+                loss = train_step(args, model, loss_fn, x, y, epsilon=0.01)
                 data_loader.set_postfix(loss=loss.item())
                 log_file.write(f"Epoch {epoch+1}, Batch {cnt_batch}, loss: {loss.item()}\n")
                 log_file.flush()
