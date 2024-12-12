@@ -32,6 +32,7 @@ def train_step(args, model, loss_fn, x, y, epsilon=0.01):
     outputs = model(x)
     logits = outputs.logits
     loss = loss_fn(logits.view(-1, logits.size(-1)), y.view(-1))
+
     loss.backward()
     optimizer.step() 
 
@@ -113,8 +114,11 @@ def main(args):
 
     data_module.setup(stage="fit")
 
-    # Replace Trainer with zero-order optimization
     log_dir = "./loss_result/"+args.loss_file
+
+    best_loss = 1.0e20
+    best_model = None
+
     with open(log_dir, "w") as log_file:
         data_loader = data_module.train_dataloader()
         loss_fn = torch.nn.CrossEntropyLoss()
@@ -131,6 +135,9 @@ def main(args):
                 data_loader.set_postfix(loss=loss.item())
                 log_file.write(f"Epoch {epoch+1}, Batch {cnt_batch}, loss: {loss.item()}\n")
                 log_file.flush()
+                if loss < best_loss:
+                    best_loss=loss
+                    best_model = model.state_dice()
 
     print("Zero-order training complete.")
 
@@ -147,7 +154,6 @@ if __name__ == "__main__":
 
     parser.add_argument("--lr", type=float, default=5e-5)
     parser.add_argument("--max_length", type=int, default=256)
-    parser.add_argument("--use_wandb", action="store_true")
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--load_model_dir", type=str, default=None)
 
