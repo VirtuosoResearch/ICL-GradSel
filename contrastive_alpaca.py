@@ -54,7 +54,7 @@ def train_step(args, model, loss_fn, contrastive_fn, x, y, epsilon=0.01):
 
     batch_size = x.size(0)
     positives = embeddings
-    negatives = embeddings.unsqueeze(0).repeat(batch_size, 1, 1)
+    negatives = embeddings.unsqueeze(1).repeat(batch_size, 1, 1)
 
     contrastive_loss_value = contrastive_fn(embeddings, positives, negatives)
 
