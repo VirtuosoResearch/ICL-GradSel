@@ -20,6 +20,8 @@ from adapters import AutoAdapterModel, DoubleSeqBnConfig
 logging.basicConfig(level=logging.INFO)
 torch.set_float32_matmul_precision("high")
 
+# where is my repo?
+
 def zero_order_train_step(args, model, loss_fn, x, y, num_samples, epsilon=0.01):
     model.eval()
 
