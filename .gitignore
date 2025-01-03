@@ -8,13 +8,15 @@ promptsource
 */promptsource
 */*promptsource*
 
+*/*.log
+*.log
 *.err
 *.out
 *.txt
 */*.err
 */*.out
 */*.txt
-
+*/*.json
 __pycache__
 */__pycache__
 */*/__pycache__
