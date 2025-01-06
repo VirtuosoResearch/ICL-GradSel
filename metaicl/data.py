@@ -12,6 +12,7 @@ import numpy as np
 import pickle as pkl
 import math
 import torch
+import random
 
 from collections import defaultdict
 from functools import partial
@@ -352,6 +353,7 @@ class MetaICLData(object):
             similarity = 1 - cosine(test_sample_embedding, train_embedding)
             similarities.append(similarity)
 
+        # print("similarities : ",similarities)
         top_k_indices = np.argsort(similarities)[-k:][::-1]
         return [train_data[i] for i in top_k_indices]
     
@@ -396,6 +398,7 @@ class MetaICLData(object):
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
 
+        # print("test_data : ",test_data)
 
         for dp_idx, dp in enumerate(test_data):
             inputs, outputs, answer = self._prepro_each_datapoint(
@@ -420,13 +423,122 @@ class MetaICLData(object):
                         neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
                     demonstrations += input_ + output_
 
+                # print("demonstrations: ", demonstrations)
+                # print("pre inputs: ",inputs)
+                # inputs = demonstrations + inputs
 
             indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
 
             metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
 
+            # print("inputs: ",inputs)
+            # print("outputs: ",outputs)
 
             for inputs_, outputs_ in zip(inputs, outputs):
+                # print("inputs_ : ",inputs_)
+                # print("outputs_ : ",outputs_)
+                if self.use_demonstrations:
+                    inputs_ = demonstrations + inputs_
+                encoded = prepro_sentence_pair_single(
+                    inputs_, outputs_, self.max_length, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
+                    allow_truncation=self.use_demonstrations
+                )
+                input_ids.append(encoded[0])
+                attention_mask.append(encoded[1])
+                token_type_ids.append(encoded[2])
+
+        self.tensorized_inputs = dict(input_ids=torch.LongTensor(input_ids),
+                                      attention_mask=torch.LongTensor(attention_mask),
+                                      token_type_ids=torch.LongTensor(token_type_ids))
+        self.metadata = metadata
+
+    def _select_randomk_neighbors(self, test_sample_embedding, train_embeddings, train_data, k):
+        
+        length = len(train_data)
+        random_indices = random.sample(range(length), k)
+
+        return [train_data[i] for i in random_indices]
+    
+    def tensorize_randomk(self, _train_data, _test_data, options=None, add_newlines=True):
+        if options is not None:
+            assert np.all([dp["output"] in options for dp in _train_data])
+            for i, dp in enumerate(_test_data):
+                assert "options" not in dp
+                assert type(dp) == str
+                _test_data[i] = {"input": dp, "options": options}
+
+        train_data, test_data = [], []
+        if self.use_demonstrations:
+            for dp in _train_data:
+                assert type(dp) == dict, ("Each example should be a dictionary", dp)
+                assert "input" in dp and "output" in dp, ("Training example should contain input and output", dp)
+                train_data.append(dp.copy())
+
+        for dp in _test_data:
+            assert type(dp) == dict, ("Each example should be a dictionary", dp)
+            assert "input" in dp and "options" in dp and type(dp["options"]) == list, \
+                ("Test example should contain input and options in a list format", dp)
+            if "output" not in dp:
+                dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
+            test_data.append(dp.copy())
+
+        if self.use_demonstrations:
+            train_texts = [dp["input"] + " " + dp["output"] for dp in train_data]
+            train_embeddings = [
+                self.tokenizer.encode(text, add_special_tokens=False) for text in train_texts
+            ]
+            print(len(train_embeddings[0]), len(train_embeddings[1]), len(train_embeddings[2]))
+            train_embeddings_pad=[]
+            max_length=self.max_length_per_example
+            for i,embedding in enumerate(train_embeddings):
+                if len(embedding) > max_length:
+                    train_embeddings_pad.append(embedding[:max_length])
+                else:
+                    train_embeddings_pad.append(embedding + [0] * (max_length - len(embedding)))
+            # train_embeddings = np.array(train_embeddings)
+            print(len(train_embeddings_pad[0]), len(train_embeddings_pad[1]), len(train_embeddings_pad[2]))
+        input_ids, attention_mask, token_type_ids = [], [], []
+        metadata = []
+
+        # print("test_data : ",test_data)
+
+        for dp_idx, dp in enumerate(test_data):
+            inputs, outputs, answer = self._prepro_each_datapoint(
+                dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
+
+            if self.use_demonstrations:
+                test_text = dp["input"]
+                test_embedding = self.tokenizer.encode(test_text, add_special_tokens=False)
+
+                if len(test_embedding) > max_length:
+                    test_embedding=test_embedding[:max_length]
+                else:
+                    test_embedding=test_embedding + [0] * (max_length - len(test_embedding))               
+
+                random_neighbors = self._select_randomk_neighbors(
+                    test_embedding, train_embeddings_pad, train_data, self.k
+                )
+
+                demonstrations = []
+                for i, neighbor_dp in enumerate(random_neighbors):
+                    input_, output_ = self._prepro_each_datapoint(
+                        neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
+                    demonstrations += input_ + output_
+
+                # print("demonstrations: ", demonstrations)
+                # print("pre inputs: ",inputs)
+                # inputs = demonstrations + inputs
+
+            indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
+
+            metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
+
+            # print("inputs: ",inputs)
+            # print("outputs: ",outputs)
+
+            for inputs_, outputs_ in zip(inputs, outputs):
+                # print("inputs_ : ",inputs_)
+                # print("outputs_ : ",outputs_)
                 if self.use_demonstrations:
                     inputs_ = demonstrations + inputs_
                 encoded = prepro_sentence_pair_single(

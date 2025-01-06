@@ -161,14 +161,16 @@ def run(logger, task, metaicl_data, metaicl_model, train_data, dev_data, seed,
         if args.is_null:
             split_name += "-null"
         cache_path = os.path.join(args.out_dir,
-                                  "{}-{}-{}{}{}{}{}.pkl".format(
+                                  "{}-{}-{}{}{}{}{}{}{}.pkl".format(
                                       task,
                                       split_name,
                                       metaicl_data.method,
                                       "-k={}".format(args.k) if args.use_demonstrations else "",
                                       "-s={}".format(seed) if args.use_demonstrations or args.use_random_english_words else "",
                                       "" if add_newlines else "-no-newlines",
-                                      "-randomEnglish" if args.use_random_english_words else ""))
+                                      "-randomEnglish" if args.use_random_english_words else "",
+                                      "-topk" if args.topk else "",
+                                      "-randomk" if args.randomk else ""))
     else:
         assert add_newlines
         cache_path = os.path.join(args.out_dir, "{}-{}-{}{}{}{}.pkl".format(
@@ -181,6 +183,8 @@ def run(logger, task, metaicl_data, metaicl_model, train_data, dev_data, seed,
                       ))
     if args.topk:
         metaicl_data.tensorize_topk(train_data, dev_data, add_newlines=add_newlines)
+    elif args.randomk:
+        metaicl_data.tensorize_randomk(train_data, dev_data, add_newlines=add_newlines)
     else:
         metaicl_data.tensorize(train_data, dev_data, add_newlines=add_newlines)
     metaicl_data.print_tensorized_example()
@@ -262,6 +266,7 @@ if __name__=='__main__':
     parser.add_argument("--gpt2", type=str, default="gpt2-large")
 
     parser.add_argument("--topk",default=False, action="store_true")
+    parser.add_argument("--randomk", default=False, action="store_true")
     args = parser.parse_args()
 
     handlers = [logging.StreamHandler()]
