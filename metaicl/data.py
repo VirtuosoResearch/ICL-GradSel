@@ -396,7 +396,6 @@ class MetaICLData(object):
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
 
-        # print("test_data : ",test_data)
 
         for dp_idx, dp in enumerate(test_data):
             inputs, outputs, answer = self._prepro_each_datapoint(
@@ -421,20 +420,13 @@ class MetaICLData(object):
                         neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
                     demonstrations += input_ + output_
 
-                print("demonstrations: ", demonstrations)
-                # print("pre inputs: ",inputs)
-                # inputs = demonstrations + inputs
 
             indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
 
             metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
 
-            print("inputs: ",inputs)
-            print("outputs: ",outputs)
 
             for inputs_, outputs_ in zip(inputs, outputs):
-                print("inputs_ : ",inputs_)
-                print("outputs_ : ",outputs_)
                 if self.use_demonstrations:
                     inputs_ = demonstrations + inputs_
                 encoded = prepro_sentence_pair_single(
