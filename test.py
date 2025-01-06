@@ -87,10 +87,10 @@ def main(logger, args):
         dev_data = load_data(args.task, args.split, args.k, seed=seed, config_split=config_split,
                              datasets=None if args.dataset is None else args.dataset.split(","), is_null=args.is_null)
 
-        if args.use_random_english_words:
-            from english_words import english_words_set
-            english_words_set = sorted(english_words_set)
-            np.random.seed(int(seed))
+        # if args.use_random_english_words:
+        #     from english_words import english_words_set
+        #     english_words_set = sorted(english_words_set)
+        #     np.random.seed(int(seed))
 
         train_counter = Counter()
         dev_counter = Counter()
@@ -179,8 +179,10 @@ def run(logger, task, metaicl_data, metaicl_model, train_data, dev_data, seed,
                         "-s={}".format(seed) if args.use_demonstrations or args.use_random_english_words else "",
                         "-randomEnglish" if args.use_random_english_words else ""
                       ))
-
-    metaicl_data.tensorize(train_data, dev_data, add_newlines=add_newlines)
+    if args.topk:
+        metaicl_data.tensorize_topk(train_data, dev_data, add_newlines=add_newlines)
+    else:
+        metaicl_data.tensorize(train_data, dev_data, add_newlines=add_newlines)
     metaicl_data.print_tensorized_example()
     logger.info(cache_path)
     prediction_path = cache_path.replace(".pkl", ".txt")
@@ -259,6 +261,7 @@ if __name__=='__main__':
     parser.add_argument("--method", type=str, default="direct", choices=["direct", "channel"])
     parser.add_argument("--gpt2", type=str, default="gpt2-large")
 
+    parser.add_argument("--topk",default=False, action="store_true")
     args = parser.parse_args()
 
     handlers = [logging.StreamHandler()]
