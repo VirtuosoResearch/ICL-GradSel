@@ -467,6 +467,8 @@ class MetaICLData(object):
                 assert type(dp) == str
                 _test_data[i] = {"input": dp, "options": options}
 
+        print(("-"*20))
+        print(f"len(_test_data): {len(_test_data)}")
         train_data, test_data = [], []
         if self.use_demonstrations:
             for dp in _train_data:
@@ -481,6 +483,10 @@ class MetaICLData(object):
             if "output" not in dp:
                 dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
             test_data.append(dp.copy())
+
+        print("-"*20)
+        print(f"len(test_data) : {len(test_data)}")
+        # print(test_data[0], test_data[1], test_data[2])
 
         if self.use_demonstrations:
             train_texts = [dp["input"] + " " + dp["output"] for dp in train_data]

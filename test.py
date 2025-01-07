@@ -59,7 +59,7 @@ def main(logger, args):
 
     # setup hyperparams for data
 
-    max_length_per_example = 256
+    max_length_per_example = 64
     max_length = 256
     if args.use_demonstrations:
         orig_max_length = max_length
@@ -84,31 +84,33 @@ def main(logger, args):
         ### data ...
         train_data = load_data(args.task, "train", args.k, seed=seed, config_split=config_split,
                                datasets=None if args.dataset is None else args.dataset.split(","))
-        dev_data = load_data(args.task, args.split, args.k, seed=seed, config_split=config_split,
+        test_data = load_data(args.task, args.split, args.k, seed=seed, config_split=config_split,
                              datasets=None if args.dataset is None else args.dataset.split(","), is_null=args.is_null)
 
+        print("*"*20)
+        print(f"args.split : {args.split}")
         # if args.use_random_english_words:
         #     from english_words import english_words_set
         #     english_words_set = sorted(english_words_set)
         #     np.random.seed(int(seed))
 
         train_counter = Counter()
-        dev_counter = Counter()
+        test_counter = Counter()
         for dp in train_data:
             train_counter[dp["task"]] += 1
-        for dp in dev_data:
-            dev_counter[dp["task"]] += 1
+        for dp in test_data:
+            test_counter[dp["task"]] += 1
         for k, v in train_counter.items():
             logger.info("[Train] %s\t%d" % (k, v))
-        for k, v in dev_counter.items():
+        for k, v in test_counter.items():
             logger.info("[Dev] %s\t%d" % (k, v))
 
-        logger.info("%s on %s (%d train, %d dev)" % (args.method, args.task, len(train_counter), len(dev_counter)))
+        logger.info("%s on %s (%d train, %d dev)" % (args.method, args.task, len(train_counter), len(test_counter)))
 
-        for test_task in dev_counter:
-            curr_dev_data = [dp for dp in dev_data if dp["task"]==test_task]
+        for test_task in test_counter:
+            curr_test_data = [dp for dp in test_data if dp["task"]==test_task]
             curr_train_data = [dp for dp in train_data if dp["task"]==test_task]
-            assert len(curr_dev_data)>0
+            assert len(curr_test_data)>0
             assert not args.use_demonstrations or len(curr_train_data)==args.k, \
                     (args.use_demonstrations, len(curr_train_data), args.k)
 
@@ -118,25 +120,25 @@ def main(logger, args):
                 config = json.load(f)
             is_classification = config["task_type"]=="classification"
             if is_classification:
-                options = curr_dev_data[0]["options"]
-                assert np.all([d["options"]==options for d in curr_dev_data])
+                options = curr_test_data[0]["options"]
+                assert np.all([d["options"]==options for d in curr_test_data])
 
-            if args.use_random_english_words:
-                # create a mapping
-                options = curr_dev_data[0]["options"]
-                mapping = {option: np.random.choice(english_words_set) for option in options}
-                new_options = list(mapping.values())
-                for dp_idx, dp in enumerate(curr_train_data):
-                    assert dp["output"] in options, (dp, options)
-                    curr_train_data[dp_idx]["output"] = mapping[dp["output"]]
-                    curr_train_data[dp_idx]["options"] = new_options
-                for dp_idx, dp in enumerate(curr_dev_data):
-                    assert dp["output"] in options, (dp, options)
-                    curr_dev_data[dp_idx]["output"] = mapping[dp["output"]]
-                    curr_dev_data[dp_idx]["options"] = new_options
+            # if args.use_random_english_words:
+            #     # create a mapping
+            #     options = curr_dev_data[0]["options"]
+            #     mapping = {option: np.random.choice(english_words_set) for option in options}
+            #     new_options = list(mapping.values())
+            #     for dp_idx, dp in enumerate(curr_train_data):
+            #         assert dp["output"] in options, (dp, options)
+            #         curr_train_data[dp_idx]["output"] = mapping[dp["output"]]
+            #         curr_train_data[dp_idx]["options"] = new_options
+            #     for dp_idx, dp in enumerate(curr_dev_data):
+            #         assert dp["output"] in options, (dp, options)
+            #         curr_dev_data[dp_idx]["output"] = mapping[dp["output"]]
+            #         curr_dev_data[dp_idx]["options"] = new_options
 
             result = run(logger, test_task, metaicl_data, metaicl_model,
-                         curr_train_data, curr_dev_data, seed, checkpoint, is_classification, add_newlines)
+                         curr_train_data, curr_test_data, seed, checkpoint, is_classification, add_newlines)
 
             if result is None:
                 errors.append("%s/%s" % (test_task, seed))
@@ -153,7 +155,7 @@ def main(logger, args):
         logger.info("Please see the error messages")
 
 
-def run(logger, task, metaicl_data, metaicl_model, train_data, dev_data, seed,
+def run(logger, task, metaicl_data, metaicl_model, train_data, test_data, seed,
         checkpoint, is_classification, add_newlines):
 
     if args.do_zeroshot:
@@ -182,11 +184,11 @@ def run(logger, task, metaicl_data, metaicl_model, train_data, dev_data, seed,
                         "-randomEnglish" if args.use_random_english_words else ""
                       ))
     if args.topk:
-        metaicl_data.tensorize_topk(train_data, dev_data, add_newlines=add_newlines)
+        metaicl_data.tensorize_topk(train_data, test_data, add_newlines=add_newlines)
     elif args.randomk:
-        metaicl_data.tensorize_randomk(train_data, dev_data, add_newlines=add_newlines)
+        metaicl_data.tensorize_randomk(train_data, test_data, add_newlines=add_newlines)
     else:
-        metaicl_data.tensorize(train_data, dev_data, add_newlines=add_newlines)
+        metaicl_data.tensorize(train_data, test_data, add_newlines=add_newlines)
     metaicl_data.print_tensorized_example()
     logger.info(cache_path)
     prediction_path = cache_path.replace(".pkl", ".txt")
