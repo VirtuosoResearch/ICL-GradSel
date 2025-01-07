@@ -347,15 +347,20 @@ class MetaICLData(object):
                     token_type_ids=torch.LongTensor(token_type_ids))
 
 
-    def _select_top_k_neighbors(self, test_sample_embedding, train_embeddings, train_data, k):
+    def _select_top_k_neighbors(self, test_sample_embedding, test_embeddings, test_data, k, dp_idx):
         similarities = []
-        for train_embedding in train_embeddings:
-            similarity = 1 - cosine(test_sample_embedding, train_embedding)
+        for idx, dp in enumerate(test_embeddings):
+
+            if idx == dp_idx:
+                similarities.append(-1.0)
+                continue
+            similarity = 1 - cosine(test_sample_embedding, dp)
             similarities.append(similarity)
 
+        # print("k : ",k)
         # print("similarities : ",similarities)
         top_k_indices = np.argsort(similarities)[-k:][::-1]
-        return [train_data[i] for i in top_k_indices]
+        return [test_data[i] for i in top_k_indices]
     
     def tensorize_topk(self, _train_data, _test_data, options=None, add_newlines=True):
         if options is not None:
@@ -381,20 +386,21 @@ class MetaICLData(object):
             test_data.append(dp.copy())
 
         if self.use_demonstrations:
-            train_texts = [dp["input"] + " " + dp["output"] for dp in train_data]
-            train_embeddings = [
-                self.tokenizer.encode(text, add_special_tokens=False) for text in train_texts
+            test_texts = [dp["input"] + " " + dp["output"] for dp in test_data]
+            test_embeddings = [
+                self.tokenizer.encode(text, add_special_tokens=False) for text in test_texts
             ]
-            print(len(train_embeddings[0]), len(train_embeddings[1]), len(train_embeddings[2]))
-            train_embeddings_pad=[]
+            print(len(test_embeddings[0]), len(test_embeddings[1]), len(test_embeddings[2]))
+            test_embeddings_pad=[]
             max_length=self.max_length_per_example
-            for i,embedding in enumerate(train_embeddings):
+            for i,embedding in enumerate(test_embeddings):
                 if len(embedding) > max_length:
-                    train_embeddings_pad.append(embedding[:max_length])
+                    test_embeddings_pad.append(embedding[:max_length])
                 else:
-                    train_embeddings_pad.append(embedding + [0] * (max_length - len(embedding)))
+                    test_embeddings_pad.append(embedding + [0] * (max_length - len(embedding)))
             # train_embeddings = np.array(train_embeddings)
-            print(len(train_embeddings_pad[0]), len(train_embeddings_pad[1]), len(train_embeddings_pad[2]))
+            print(len(test_embeddings_pad[0]), len(test_embeddings_pad[1]), len(test_embeddings_pad[2]))
+
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
 
@@ -406,15 +412,10 @@ class MetaICLData(object):
 
             if self.use_demonstrations:
                 test_text = dp["input"]
-                test_embedding = self.tokenizer.encode(test_text, add_special_tokens=False)
-
-                if len(test_embedding) > max_length:
-                    test_embedding=test_embedding[:max_length]
-                else:
-                    test_embedding=test_embedding + [0] * (max_length - len(test_embedding))               
+                test_embedding = test_embeddings_pad[dp_idx]            
 
                 top_k_neighbors = self._select_top_k_neighbors(
-                    test_embedding, train_embeddings_pad, train_data, self.k
+                    test_embedding, test_embeddings_pad, test_data, self.k, dp_idx
                 )
 
                 demonstrations = []
@@ -452,12 +453,13 @@ class MetaICLData(object):
                                       token_type_ids=torch.LongTensor(token_type_ids))
         self.metadata = metadata
 
-    def _select_randomk_neighbors(self, test_sample_embedding, train_embeddings, train_data, k):
+    def _select_random_k_neighbors(self, test_sample_embedding, test_embeddings, test_data, k, dp_idx):
         
-        length = len(train_data)
-        random_indices = random.sample(range(length), k)
+        length = len(test_data)
+        candidates = [i for i in range(length) if i!= dp_idx]
+        random_indices = random.sample(candidates, k)
 
-        return [train_data[i] for i in random_indices]
+        return [test_data[i] for i in random_indices]
     
     def tensorize_randomk(self, _train_data, _test_data, options=None, add_newlines=True):
         if options is not None:
@@ -489,20 +491,21 @@ class MetaICLData(object):
         # print(test_data[0], test_data[1], test_data[2])
 
         if self.use_demonstrations:
-            train_texts = [dp["input"] + " " + dp["output"] for dp in train_data]
-            train_embeddings = [
-                self.tokenizer.encode(text, add_special_tokens=False) for text in train_texts
+            test_texts = [dp["input"] + " " + dp["output"] for dp in test_data]
+            test_embeddings = [
+                self.tokenizer.encode(text, add_special_tokens=False) for text in test_texts
             ]
-            print(len(train_embeddings[0]), len(train_embeddings[1]), len(train_embeddings[2]))
-            train_embeddings_pad=[]
+            print(len(test_embeddings[0]), len(test_embeddings[1]), len(test_embeddings[2]))
+            test_embeddings_pad=[]
             max_length=self.max_length_per_example
-            for i,embedding in enumerate(train_embeddings):
+            for i,embedding in enumerate(test_embeddings):
                 if len(embedding) > max_length:
-                    train_embeddings_pad.append(embedding[:max_length])
+                    test_embeddings_pad.append(embedding[:max_length])
                 else:
-                    train_embeddings_pad.append(embedding + [0] * (max_length - len(embedding)))
+                    test_embeddings_pad.append(embedding + [0] * (max_length - len(embedding)))
             # train_embeddings = np.array(train_embeddings)
-            print(len(train_embeddings_pad[0]), len(train_embeddings_pad[1]), len(train_embeddings_pad[2]))
+            print(len(test_embeddings_pad[0]), len(test_embeddings_pad[1]), len(test_embeddings_pad[2]))
+
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
 
@@ -514,19 +517,13 @@ class MetaICLData(object):
 
             if self.use_demonstrations:
                 test_text = dp["input"]
-                test_embedding = self.tokenizer.encode(test_text, add_special_tokens=False)
+                test_embedding = test_embeddings_pad[dp_idx]            
 
-                if len(test_embedding) > max_length:
-                    test_embedding=test_embedding[:max_length]
-                else:
-                    test_embedding=test_embedding + [0] * (max_length - len(test_embedding))               
-
-                random_neighbors = self._select_randomk_neighbors(
-                    test_embedding, train_embeddings_pad, train_data, self.k
+                randomk_neighbors = self._select_random_k_neighbors(
+                    test_embedding, test_embeddings_pad, test_data, self.k, dp_idx
                 )
-
                 demonstrations = []
-                for i, neighbor_dp in enumerate(random_neighbors):
+                for i, neighbor_dp in enumerate(randomk_neighbors):
                     input_, output_ = self._prepro_each_datapoint(
                         neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
                     demonstrations += input_ + output_
