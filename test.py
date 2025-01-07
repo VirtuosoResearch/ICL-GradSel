@@ -229,7 +229,7 @@ def run(logger, task, metaicl_data, metaicl_model, train_data, test_data, seed,
         losses -= bias_losses
 
     predictions = metaicl_model.do_predict(metaicl_data, losses=losses)
-    groundtruths = [dp["output"] for dp in dev_data]
+    groundtruths = [dp["output"] for dp in test_data]
     perf = metaicl_data.evaluate(predictions, groundtruths, is_classification)
     logger.info("Accuracy=%s" % perf)
 
