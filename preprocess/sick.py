@@ -1,12 +1,8 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-
 import os
 import datasets
 import numpy as np
+import argparse
+import json
 
 from fewshot_gym_dataset import FewshotGymDataset, FewshotGymClassificationDataset
 
@@ -33,11 +29,46 @@ class Sick(FewshotGymClassificationDataset):
     def load_dataset(self):
         return datasets.load_dataset('sick')
 
-def main():
+def main(args):
     dataset = Sick()
+    full_data = dataset.load_dataset()
 
-    for seed in [100, 13, 21, 42, 87]:
-        train, dev, test = dataset.generate_k_shot_data(k=16, seed=seed, path="../data/")
+    train_data = dataset.map_hf_dataset_to_list(full_data, "train")
+    dev_data = dataset.map_hf_dataset_to_list(full_data, "validation")
+    test_data = dataset.map_hf_dataset_to_list(full_data, "test")
+
+    path = "../data/sick"
+    os.makedirs(path, exist_ok=True)
+
+    def format_data(data, task_name):
+        formatted = []
+        options = ["contradiction", "entailment", "neutral"]
+        for input_text, output in data:
+            formatted.append({
+                "task": task_name,
+                "input": input_text,
+                "output": output,
+                "options": options,
+            })
+        return formatted
+
+    train_json = format_data(train_data, "sick")
+    dev_json = format_data(dev_data, "sick")
+    test_json = format_data(test_data, "sick")
+
+    def save_jsonl(data, path):
+        with open(path, "w") as f:
+            for entry in data:
+                f.write(json.dumps(entry) + "\n")
+
+    save_jsonl(train_json, os.path.join(path, "sick_train.jsonl"))
+    save_jsonl(dev_json, os.path.join(path, "sick_dev.jsonl"))
+    save_jsonl(test_json, os.path.join(path, "sick_test.jsonl"))
+
+    # print("Data saved successfully!")
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--k", type=int, default=16)
+    args = parser.parse_args()
+    main(args)

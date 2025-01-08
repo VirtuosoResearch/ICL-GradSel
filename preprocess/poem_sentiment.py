@@ -40,9 +40,41 @@ class PoemSentiment(FewshotGymClassificationDataset):
 
 def main():
     dataset = PoemSentiment()
+    full_data = dataset.load_dataset()
 
-    for seed in [100, 13, 21, 42, 87]:
-        train, dev, test = dataset.generate_k_shot_data(k=16, seed=seed, path="../data/")
+    train_data = dataset.map_hf_dataset_to_list(full_data, "train")
+    dev_data = dataset.map_hf_dataset_to_list(full_data, "validation")
+    test_data = dataset.map_hf_dataset_to_list(full_data, "test")
+
+    path = "../data/poem_sentiment"
+    os.makedirs(path, exist_ok=True)
+
+    def format_data(data, task_name):
+        formatted = []
+        options = ["contradiction", "entailment", "neutral"]
+        for input_text, output in data:
+            formatted.append({
+                "task": task_name,
+                "input": input_text,
+                "output": output,
+                "options": options,
+            })
+        return formatted
+
+    train_json = format_data(train_data, "poem_sentiment")
+    dev_json = format_data(dev_data, "poem_sentiment")
+    test_json = format_data(test_data, "poem_sentiment")
+
+    def save_jsonl(data, path):
+        with open(path, "w") as f:
+            for entry in data:
+                f.write(json.dumps(entry) + "\n")
+
+    save_jsonl(train_json, os.path.join(path, "poem_sentiment_train.jsonl"))
+    save_jsonl(dev_json, os.path.join(path, "poem_sentiment_dev.jsonl"))
+    save_jsonl(test_json, os.path.join(path, "poem_sentiment_test.jsonl"))
+
+    # print("Data saved successfully!")
 
 if __name__ == "__main__":
     main()
