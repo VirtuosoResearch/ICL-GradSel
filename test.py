@@ -29,6 +29,7 @@ from utils.data import load_data
 def main(logger, args):
     assert (args.dataset is not None and args.task is None) or (args.dataset is None and args.task is not None)
 
+    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
     if args.gpt2.startswith("gpt2"):
         tokenizer = GPT2Tokenizer.from_pretrained(args.gpt2)
     else:
@@ -53,13 +54,14 @@ def main(logger, args):
             args.gpt2 = args.checkpoint
         checkpoint = None
     metaicl_model = MetaICLModel(logger, args.out_dir)
+    # metaicl_model.to_device()
 
     if not os.path.exists(args.out_dir):
         os.makedirs(args.out_dir)
 
     # setup hyperparams for data
 
-    max_length_per_example = 64
+    max_length_per_example = 128
     max_length = 256
     if args.use_demonstrations:
         orig_max_length = max_length
@@ -111,8 +113,8 @@ def main(logger, args):
             curr_test_data = [dp for dp in test_data if dp["task"]==test_task]
             curr_train_data = [dp for dp in train_data if dp["task"]==test_task]
             assert len(curr_test_data)>0
-            assert not args.use_demonstrations or len(curr_train_data)==args.k, \
-                    (args.use_demonstrations, len(curr_train_data), args.k)
+            # assert not args.use_demonstrations or len(curr_train_data)==args.k, \
+            #         (args.use_demonstrations, len(curr_train_data), args.k)
 
             config_file = "config/tasks/{}.json".format(test_task)
             assert os.path.exists(config_file), config_file
@@ -123,22 +125,8 @@ def main(logger, args):
                 options = curr_test_data[0]["options"]
                 assert np.all([d["options"]==options for d in curr_test_data])
 
-            # if args.use_random_english_words:
-            #     # create a mapping
-            #     options = curr_dev_data[0]["options"]
-            #     mapping = {option: np.random.choice(english_words_set) for option in options}
-            #     new_options = list(mapping.values())
-            #     for dp_idx, dp in enumerate(curr_train_data):
-            #         assert dp["output"] in options, (dp, options)
-            #         curr_train_data[dp_idx]["output"] = mapping[dp["output"]]
-            #         curr_train_data[dp_idx]["options"] = new_options
-            #     for dp_idx, dp in enumerate(curr_dev_data):
-            #         assert dp["output"] in options, (dp, options)
-            #         curr_dev_data[dp_idx]["output"] = mapping[dp["output"]]
-            #         curr_dev_data[dp_idx]["options"] = new_options
-
             result = run(logger, test_task, metaicl_data, metaicl_model,
-                         curr_train_data, curr_test_data, seed, checkpoint, is_classification, add_newlines)
+                         curr_train_data, curr_test_data, seed, checkpoint, is_classification, add_newlines, device)
 
             if result is None:
                 errors.append("%s/%s" % (test_task, seed))
@@ -156,14 +144,14 @@ def main(logger, args):
 
 
 def run(logger, task, metaicl_data, metaicl_model, train_data, test_data, seed,
-        checkpoint, is_classification, add_newlines):
+        checkpoint, is_classification, add_newlines,device):
 
     if args.do_zeroshot:
         split_name = args.split
         if args.is_null:
             split_name += "-null"
         cache_path = os.path.join(args.out_dir,
-                                  "{}-{}-{}{}{}{}{}{}{}.pkl".format(
+                                  "{}-{}-{}{}{}{}{}{}{}{}.pkl".format(
                                       task,
                                       split_name,
                                       metaicl_data.method,
@@ -172,7 +160,8 @@ def run(logger, task, metaicl_data, metaicl_model, train_data, test_data, seed,
                                       "" if add_newlines else "-no-newlines",
                                       "-randomEnglish" if args.use_random_english_words else "",
                                       "-topk" if args.topk else "",
-                                      "-randomk" if args.randomk else ""))
+                                      "-randomk" if args.randomk else "",
+                                      "-supcon" if args.supcon else ""))
     else:
         assert add_newlines
         cache_path = os.path.join(args.out_dir, "{}-{}-{}{}{}{}.pkl".format(
@@ -187,6 +176,8 @@ def run(logger, task, metaicl_data, metaicl_model, train_data, test_data, seed,
         metaicl_data.tensorize_topk(train_data, test_data, add_newlines=add_newlines)
     elif args.randomk:
         metaicl_data.tensorize_randomk(train_data, test_data, add_newlines=add_newlines)
+    elif args.supcon:
+        metaicl_data.tensorize_supcon(train_data, test_data, args.m, add_newlines=add_newlines)
     else:
         metaicl_data.tensorize(train_data, test_data, add_newlines=add_newlines)
     metaicl_data.print_tensorized_example()
@@ -269,6 +260,8 @@ if __name__=='__main__':
 
     parser.add_argument("--topk",default=False, action="store_true")
     parser.add_argument("--randomk", default=False, action="store_true")
+    parser.add_argument("--supcon", default=False, action="store_true")
+    parser.add_argument("--m", type=int, default=4)
     args = parser.parse_args()
 
     handlers = [logging.StreamHandler()]
