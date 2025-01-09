@@ -13,6 +13,7 @@ import pickle as pkl
 import math
 import torch
 import random
+from itertools import combinations
 
 from collections import defaultdict
 from functools import partial
@@ -448,34 +449,43 @@ class MetaICLData(object):
         self.metadata = metadata
 
 
-
     def greedy_supcon(self, embeddings, top_k_indices, m, test_embedding, candidate_labels, test_label, test_data, temperature=0.1):
 
-        assert m <= len(top_k_indices) , "Error: m must less than k"
+        assert m <= len(top_k_indices), "Error: m must less than k"
 
-        top_k_embeddings = [embeddings[i] for i in top_k_indices]
-        top_k_data = [test_data[i] for i in top_k_indices]
+        all_combinations = list(combinations(top_k_indices, m))
 
-        selected_indices = []
-        candidate_indices = list(range(len(top_k_indices)))
-        
-        conloss = []
+        best_combination = []
+        best_loss = float('inf') 
+        test_embedding = torch.tensor(test_embedding, dtype=torch.float32)
+        test_embedding = test_embedding / torch.norm(test_embedding)
+        for idx in range(len(embeddings)):
+            embeddings[idx] = torch.tensor(embeddings[idx], dtype=torch.float32)
+            embeddings[idx] = embeddings[idx] / torch.norm(embeddings[idx])
 
-        for _ in range(m):
-            loss , pos_loss, all_loss = 0.0 , 0.0 , 0.0
-            for idx in candidate_indices:
-                loss = torch.exp(torch.matmul(torch.tensor(top_k_embeddings[idx]), torch.tensor(test_embedding)) / temperature)
+        for combination in all_combinations:
+            selected_embeddings = [embeddings[i] for i in combination]
+            selected_data = [test_data[i] for i in combination]
+
+            con_loss, pos_loss, all_loss = 0.0, 0.0, 0.0
+            for idx in combination:
+                loss = torch.exp(torch.matmul(embeddings[idx], test_embedding) / temperature)
                 if candidate_labels[idx] == test_label:
-                    pos_loss+=loss
-                all_loss+=loss
-            conloss.append(-1.0*torch.log(pos_loss/all_loss))
-        
-        selected_indices = np.argsort(conloss)[-m:][::-1]
+                    pos_loss += loss
+                all_loss += loss
 
-        return [top_k_data[idx] for idx in selected_indices]
 
-    def tensorize_supcon(self, _train_data, _test_data, options=None, add_newlines=True):
-        m = 4
+                con_loss = -1.0 * torch.log(pos_loss / all_loss)
+
+            if pos_loss<0.0000001: continue
+
+            if con_loss < best_loss:
+                best_loss = con_loss
+                best_combination = selected_data
+
+        return best_combination
+
+    def tensorize_supcon(self, _train_data, _test_data, m, options=None, add_newlines=True):
         if options is not None:
             assert np.all([dp["output"] in options for dp in _train_data])
             for i, dp in enumerate(_test_data):
