@@ -51,7 +51,7 @@ def main():
 
     def format_data(data, task_name):
         formatted = []
-        options = ["contradiction", "entailment", "neutral"]
+        options = ["negative", "no_impact", "positive"]
         for input_text, output in data:
             formatted.append({
                 "task": task_name,
