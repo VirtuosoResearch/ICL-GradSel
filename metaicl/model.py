@@ -244,7 +244,7 @@ class MetaICLModel(object):
         if verbose:
             dataloader = tqdm(dataloader)
         losses = []
-        for batch in dataloader:
+        for batch in tqdm(dataloader):
             input_ids=batch[0].cuda()
             attention_mask=batch[1].cuda()
             token_type_ids=batch[2].cuda()
