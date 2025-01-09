@@ -363,7 +363,7 @@ class MetaICLData(object):
         # print("k : ",k)
         # print("similarities : ",similarities)
         top_k_indices = np.argsort(similarities)[-k:][::-1]
-        return [test_data[i] for i in top_k_indices], top_k_indices
+        return [test_data[i] for i in top_k_indices], top_k_indices , similarities
     
     def tensorize_topk(self, _train_data, _test_data, options=None, add_newlines=True):
         if options is not None:
@@ -418,7 +418,7 @@ class MetaICLData(object):
                 test_text = dp["input"]
                 test_embedding = test_embeddings_pad[dp_idx]            
 
-                top_k_neighbors, _ = self._select_top_k_neighbors(
+                top_k_neighbors, _, __ = self._select_top_k_neighbors(
                     test_embedding, test_embeddings_pad, test_data, self.k, dp_idx
                 )
 
@@ -449,7 +449,7 @@ class MetaICLData(object):
         self.metadata = metadata
 
 
-    def greedy_supcon(self, embeddings, top_k_indices, m, test_embedding, candidate_labels, test_label, test_data, temperature=0.1):
+    def greedy_supcon(self, embeddings, top_k_indices, m, test_embedding, candidate_labels, test_label, test_data, similarities, temperature=0.1):
 
         assert m <= len(top_k_indices), "Error: m must less than k"
 
@@ -467,6 +467,11 @@ class MetaICLData(object):
             selected_embeddings = [embeddings[i] for i in combination]
             selected_data = [test_data[i] for i in combination]
 
+            simloss = 0.0
+            for idx in combination:
+                simloss+=similarities[idx]
+            simloss /= m
+            
             con_loss, pos_loss, all_loss = 0.0, 0.0, 0.0
             for idx in combination:
                 loss = torch.exp(torch.matmul(embeddings[idx], test_embedding) / temperature)
@@ -477,10 +482,12 @@ class MetaICLData(object):
 
                 con_loss = -1.0 * torch.log(pos_loss / all_loss)
 
-            if pos_loss<0.0000001: continue
+            if pos_loss<0.0000001: con_loss = 100.0
 
-            if con_loss < best_loss:
-                best_loss = con_loss
+            simcon_loss = -simloss + 0.5 * con_loss
+            # print("simloss : ",simloss, "con_loss : ",con_loss, "simcon_loss : ",simcon_loss)
+            if simcon_loss < best_loss:
+                best_loss = simcon_loss
                 best_combination = selected_data
 
         return best_combination
@@ -538,10 +545,11 @@ class MetaICLData(object):
                 test_text = dp["input"]
                 test_embedding = test_embeddings_pad[dp_idx]            
 
-                top_k_neighbors, top_k_indices = self._select_top_k_neighbors(
+                top_k_neighbors, top_k_indices, similarities = self._select_top_k_neighbors(
                     test_embedding, test_embeddings_pad, test_data, self.k, dp_idx
                 )
                 
+                # print("similarities : ",similarities)
 
                 greedy = self.greedy_supcon(
                     embeddings=test_embeddings_pad,
@@ -550,7 +558,8 @@ class MetaICLData(object):
                     test_embedding=test_embedding, 
                     candidate_labels=test_labels, 
                     test_label=test_labels[dp_idx],
-                    test_data=test_data
+                    test_data=test_data,
+                    similarities = similarities
                 )
 
                 # print("-----------Greedy------------")
