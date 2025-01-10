@@ -54,9 +54,40 @@ class MedicalQuestionPairs(FewshotGymClassificationDataset):
 
 def main():
     dataset = MedicalQuestionPairs()
+    full_data = dataset.load_dataset()
+    print(full_data.keys())
+    train_data = dataset.map_hf_dataset_to_list(full_data, "train")
+    # dev_data = dataset.map_hf_dataset_to_list(full_data, "validation")
+    # test_data = dataset.map_hf_dataset_to_list(full_data, "test")
 
-    for seed in [100, 13, 21, 42, 87]:
-        train, dev, test = dataset.generate_k_shot_data(k=16, seed=seed, path="../data/")
+    path = "../data/medical_questions_pairs"
+    os.makedirs(path, exist_ok=True)
 
+    def format_data(data, task_name):
+        formatted = []
+        options = ["Similar", "Dissimilar"]
+        for input_text, output in data:
+            formatted.append({
+                "task": task_name,
+                "input": input_text,
+                "output": output,
+                "options": options,
+            })
+        return formatted
+
+    train_json = format_data(train_data, "medical_questions_pairs")
+    # dev_json = format_data(dev_data, "medical_questions_pairs")
+    # test_json = format_data(test_data, "medical_questions_pairs")
+
+    def save_jsonl(data, path):
+        with open(path, "w") as f:
+            for entry in data:
+                f.write(json.dumps(entry) + "\n")
+
+    save_jsonl(train_json, os.path.join(path, "medical_questions_pairs_train.jsonl"))
+    # save_jsonl(dev_json, os.path.join(path, "medical_questions_pairs_dev.jsonl"))
+    # save_jsonl(test_json, os.path.join(path, "medical_questions_pairs_test.jsonl"))
+
+    print("Data saved successfully!")
 if __name__ == "__main__":
     main()

@@ -24,7 +24,7 @@ def load_data(task, split, k, seed=0, config_split=None, datasets=None,
     data = []
     for dataset in datasets:
         data_path = os.path.join("data", dataset,
-                                 "{}_{}_{}_{}.jsonl".format(dataset, k, seed, split))
+                                 "{}_{}.jsonl".format(dataset, split))
         with open(data_path, "r") as f:
             for line in f:
                 dp = json.loads(line)

@@ -19,7 +19,7 @@ parser.add_argument('--inst', action='store_true',
                     help="Construct data from hg datasets.")
 parser.add_argument('--do_train', action='store_true',
                     help="Verify the datafiles with pre-computed MD5")
-parser.add_argument('--do_test', action='store_true',
+parser.add_argument('--do_test',default=True, action='store_true',
                     help="Run 2 tasks per process to test the code")
 parser.add_argument('--train_k', type=int, default=16384, help="k for meta-training tasks")
 parser.add_argument('--test_k', type=int, default=16, help="k for target tasks")
