@@ -365,20 +365,15 @@ class MetaICLData(object):
         top_k_indices = np.argsort(similarities)[-k:][::-1]
         return [test_data[i] for i in top_k_indices], top_k_indices , similarities
     
-    def tensorize_topk(self, _train_data, _test_data, options=None, add_newlines=True):
+    def tensorize_topk(self, _test_data, options=None, add_newlines=True):
         if options is not None:
-            assert np.all([dp["output"] in options for dp in _train_data])
             for i, dp in enumerate(_test_data):
                 assert "options" not in dp
                 assert type(dp) == str
                 _test_data[i] = {"input": dp, "options": options}
 
-        train_data, test_data, test_labels = [], [], []
-        if self.use_demonstrations:
-            for dp in _train_data:
-                assert type(dp) == dict, ("Each example should be a dictionary", dp)
-                assert "input" in dp and "output" in dp, ("Training example should contain input and output", dp)
-                train_data.append(dp.copy())
+        train_data, test_data = [], [], []
+
 
 
         for dp in _test_data:
@@ -473,18 +468,21 @@ class MetaICLData(object):
             simloss /= m
             
             con_loss, pos_loss, all_loss = 0.0, 0.0, 0.0
+            cnt=0
+            temperature=0.1
             for idx in combination:
                 loss = torch.exp(torch.matmul(embeddings[idx], test_embedding) / temperature)
                 if candidate_labels[idx] == test_label:
                     pos_loss += loss
+                    cnt+=1
                 all_loss += loss
 
 
-                con_loss = -1.0 * torch.log(pos_loss / all_loss)
+                con_loss = -1.0 * torch.log((pos_loss / all_loss))
 
             if pos_loss<0.0000001: con_loss = 100.0
-
-            simcon_loss = -simloss + 0.5 * con_loss
+            lam=0.5
+            simcon_loss = -simloss + lam*con_loss
             # print("simloss : ",simloss, "con_loss : ",con_loss, "simcon_loss : ",simcon_loss)
             if simcon_loss < best_loss:
                 best_loss = simcon_loss
@@ -492,23 +490,16 @@ class MetaICLData(object):
 
         return best_combination
 
-    def tensorize_supcon(self, _train_data, _test_data, m, options=None, add_newlines=True):
+    def tensorize_supcon(self, _test_data, m, options=None, add_newlines=True):
         if options is not None:
-            assert np.all([dp["output"] in options for dp in _train_data])
             for i, dp in enumerate(_test_data):
                 assert "options" not in dp
                 assert type(dp) == str
                 _test_data[i] = {"input": dp, "options": options}
 
         train_data, test_data, test_labels = [], [], []
-        if self.use_demonstrations:
-            for dp in _train_data:
-                assert type(dp) == dict, ("Each example should be a dictionary", dp)
-                assert "input" in dp and "output" in dp, ("Training example should contain input and output", dp)
-                train_data.append(dp.copy())
 
-        print("*-"*20)
-        print(train_data[0])
+
         for dp in _test_data:
             assert type(dp) == dict, ("Each example should be a dictionary", dp)
             assert "input" in dp and "options" in dp and type(dp["options"]) == list, \
@@ -600,9 +591,8 @@ class MetaICLData(object):
 
         return [test_data[i] for i in random_indices]
     
-    def tensorize_randomk(self, _train_data, _test_data, options=None, add_newlines=True):
+    def tensorize_randomk(self, _test_data, options=None, add_newlines=True):
         if options is not None:
-            assert np.all([dp["output"] in options for dp in _train_data])
             for i, dp in enumerate(_test_data):
                 assert "options" not in dp
                 assert type(dp) == str
@@ -611,11 +601,7 @@ class MetaICLData(object):
         print(("-"*20))
         print(f"len(_test_data): {len(_test_data)}")
         train_data, test_data = [], []
-        if self.use_demonstrations:
-            for dp in _train_data:
-                assert type(dp) == dict, ("Each example should be a dictionary", dp)
-                assert "input" in dp and "output" in dp, ("Training example should contain input and output", dp)
-                train_data.append(dp.copy())
+
 
         for dp in _test_data:
             assert type(dp) == dict, ("Each example should be a dictionary", dp)

@@ -151,7 +151,7 @@ def run(logger, task, metaicl_data, metaicl_model, train_data, test_data, seed,
         if args.is_null:
             split_name += "-null"
         cache_path = os.path.join(args.out_dir,
-                                  "{}-{}-{}{}{}{}{}{}{}{}.pkl".format(
+                                  "{}-{}-{}{}{}{}{}{}{}{}{}.pkl".format(
                                       task,
                                       split_name,
                                       metaicl_data.method,
@@ -161,7 +161,8 @@ def run(logger, task, metaicl_data, metaicl_model, train_data, test_data, seed,
                                       "-randomEnglish" if args.use_random_english_words else "",
                                       "-topk" if args.topk else "",
                                       "-randomk" if args.randomk else "",
-                                      "-supcon" if args.supcon else ""))
+                                      "-supcon" if args.supcon else "",
+                                      "-m={}".format(args.m) if args.supcon else "",))
     else:
         assert add_newlines
         cache_path = os.path.join(args.out_dir, "{}-{}-{}{}{}{}.pkl".format(
@@ -173,11 +174,11 @@ def run(logger, task, metaicl_data, metaicl_model, train_data, test_data, seed,
                         "-randomEnglish" if args.use_random_english_words else ""
                       ))
     if args.topk:
-        metaicl_data.tensorize_topk(train_data, test_data, add_newlines=add_newlines)
+        metaicl_data.tensorize_topk(test_data, add_newlines=add_newlines)
     elif args.randomk:
-        metaicl_data.tensorize_randomk(train_data, test_data, add_newlines=add_newlines)
+        metaicl_data.tensorize_randomk(test_data, add_newlines=add_newlines)
     elif args.supcon:
-        metaicl_data.tensorize_supcon(train_data, test_data, args.m, add_newlines=add_newlines)
+        metaicl_data.tensorize_supcon(test_data, args.m, add_newlines=add_newlines)
     else:
         metaicl_data.tensorize(train_data, test_data, add_newlines=add_newlines)
     metaicl_data.print_tensorized_example()
