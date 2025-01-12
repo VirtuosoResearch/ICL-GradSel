@@ -372,7 +372,7 @@ class MetaICLData(object):
                 assert type(dp) == str
                 _test_data[i] = {"input": dp, "options": options}
 
-        train_data, test_data = [], [], []
+        train_data, test_data =  [], []
 
 
 
@@ -444,16 +444,15 @@ class MetaICLData(object):
         self.metadata = metadata
 
 
-    def greedy_supcon(self, embeddings, top_k_indices, m, test_embedding, candidate_labels, test_label, test_data, similarities, temperature=0.1):
+    def greedy_supcon(self, embeddings, top_k_indices, m, candidate_labels, test_data, similarities, temperature=0.1, softloss=True):
 
         assert m <= len(top_k_indices), "Error: m must less than k"
 
         all_combinations = list(combinations(top_k_indices, m))
 
-        best_combination = []
+        best_combination_data = []
         best_loss = float('inf') 
-        test_embedding = torch.tensor(test_embedding, dtype=torch.float32)
-        test_embedding = test_embedding / torch.norm(test_embedding)
+
         for idx in range(len(embeddings)):
             embeddings[idx] = torch.tensor(embeddings[idx], dtype=torch.float32)
             embeddings[idx] = embeddings[idx] / torch.norm(embeddings[idx])
@@ -462,33 +461,70 @@ class MetaICLData(object):
             selected_embeddings = [embeddings[i] for i in combination]
             selected_data = [test_data[i] for i in combination]
 
+            # compute simloss
             simloss = 0.0
             for idx in combination:
                 simloss+=similarities[idx]
             simloss /= m
             
+            # compute supcon loss
             con_loss, pos_loss, all_loss = 0.0, 0.0, 0.0
-            cnt=0
+            # con_loss = torch.tensor(0.0, dtype=float)
             temperature=0.1
-            for idx in combination:
-                loss = torch.exp(torch.matmul(embeddings[idx], test_embedding) / temperature)
-                if candidate_labels[idx] == test_label:
-                    pos_loss += loss
-                    cnt+=1
-                all_loss += loss
+            if softloss==False:
+                for idx1 in combination:
+                    cnt_pos=0
+                    pos_loss = all_loss =0.0
+                    for idx2 in combination:
+                        if idx1==idx2: continue
+                        idx1_embedding, idx1_label = embeddings[idx1], candidate_labels[idx1]
+                        idx2_embedding, idx2_label = embeddings[idx2], candidate_labels[idx2]
+                        loss = torch.exp(torch.matmul(idx1_embedding, idx2_embedding) / temperature)
+                        if idx1_label == idx2_label:
+                            pos_loss += loss
+                            cnt_pos+=1
+                        all_loss += loss
+                    idx_loss = pos_loss / all_loss / cnt_pos
+                    con_loss += torch.tensor(-1.0, dtype=float)  * torch.log(idx_loss)
+            else:
+                for idx1 in combination:
+                    cnt_pos = 0
+                    pos_loss = 0.0
+                    idx1_embedding, idx1_label = embeddings[idx1], candidate_labels[idx1]
+                    logits = []
+                    for idx2 in combination:
+                        if idx1 == idx2:
+                            continue
+                        idx2_embedding, idx2_label = embeddings[idx2], candidate_labels[idx2]
+                        similarity = torch.matmul(idx1_embedding, idx2_embedding) / temperature
+                        logits.append(similarity)
+                        if idx1_label == idx2_label:
+                            pos_loss += torch.exp(similarity)
+                            cnt_pos += 1
+                    
+                    logits = torch.tensor(logits)
+                    logits_max = torch.max(logits)
+                    logits = logits - logits_max.detach()
 
+                    exp_logits = torch.exp(logits)
+                    exp_logits_sum = exp_logits.sum()
+                    
+                    if cnt_pos > 0:
+                        pos_prob = pos_loss / exp_logits_sum 
+                        idx_loss = pos_prob / cnt_pos 
+                    else:
+                        idx_loss = 1e-6
+                    idx_loss = torch.tensor(idx_loss, dtype=torch.float32)
+                    con_loss += -1.0 * torch.log(idx_loss)
 
-                con_loss = -1.0 * torch.log((pos_loss / all_loss))
-
-            if pos_loss<0.0000001: con_loss = 100.0
-            lam=0.5
+            lam=0.03
             simcon_loss = -simloss + lam*con_loss
             # print("simloss : ",simloss, "con_loss : ",con_loss, "simcon_loss : ",simcon_loss)
             if simcon_loss < best_loss:
                 best_loss = simcon_loss
-                best_combination = selected_data
+                best_combination_data = selected_data
 
-        return best_combination
+        return best_combination_data
 
     def tensorize_supcon(self, _test_data, m, options=None, add_newlines=True):
         if options is not None:
@@ -546,9 +582,7 @@ class MetaICLData(object):
                     embeddings=test_embeddings_pad,
                     top_k_indices=top_k_indices,
                     m=m, 
-                    test_embedding=test_embedding, 
                     candidate_labels=test_labels, 
-                    test_label=test_labels[dp_idx],
                     test_data=test_data,
                     similarities = similarities
                 )
@@ -681,18 +715,13 @@ class MetaICLData(object):
                   add_newlines=True):
 
         if options is not None:
-            assert np.all([dp["output"] in options for dp in _train_data])
             for i, dp in enumerate(_test_data):
                 assert "options" not in dp
                 assert type(dp)==str
                 _test_data[i] = {"input": dp, "options": options}
 
         train_data, test_data = [], []
-        if self.use_demonstrations:
-            for dp in _train_data:
-                assert type(dp)==dict, ("Each example should be a dictionary", dp)
-                assert "input" in dp and "output" in dp, ("Training example should contain input and output", dp)
-                train_data.append(dp.copy())
+
         for dp in _test_data:
             assert type(dp)==dict, ("Each example should be a dictionary", dp)
             assert "input" in dp and "options" in dp and type(dp["options"])==list, \
