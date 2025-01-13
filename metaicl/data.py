@@ -569,13 +569,13 @@ class MetaICLData(object):
                                       token_type_ids=torch.LongTensor(token_type_ids))
         self.metadata = metadata
 
-    def _select_unlabeled(self, test_data, k, dp_idx):
+    # def _select_unlabeled(self, test_data, k, dp_idx):
         
-        length = len(test_data)
-        candidates = [i for i in range(length) if i!= dp_idx]
-        random_indices = random.sample(candidates, k)
+    #     length = len(test_data)
+    #     candidates = [i for i in range(length) if i!= dp_idx]
+    #     random_indices = random.sample(candidates, k)
 
-        return [test_data[i] for i in random_indices]
+    #     return [test_data[i] for i in random_indices]
     
 
     def tensorize_unlabeled(self, _test_data, options=None, add_newlines=True):
@@ -604,7 +604,7 @@ class MetaICLData(object):
             ]
             print(len(test_embeddings[0]), len(test_embeddings[1]), len(test_embeddings[2]))
 
-            test_embeddings_pad, test_unlab_embeddings_pad=[]
+            test_embeddings_pad=[]
             max_length=self.max_length_per_example
             for i,embedding in enumerate(test_embeddings):
                 if len(embedding) > max_length:
@@ -624,11 +624,11 @@ class MetaICLData(object):
                 test_text = dp["input"]
                 test_embedding = test_embeddings_pad[dp_idx]            
 
-                randomk_neighbors = self._select_unlabeled(
-                    test_data, self.k, dp_idx
+                top_k_neighbors, _, __ = self._select_top_k_neighbors(
+                    test_embedding, test_embeddings_pad, test_data, self.k, dp_idx
                 )
                 demonstrations = []
-                for i, neighbor_dp in enumerate(randomk_neighbors):
+                for i, neighbor_dp in enumerate(top_k_neighbors):
                     input_, output_ = self._prepro_each_datapoint(
                         neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
                     if i<= self.k//2:
