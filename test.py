@@ -91,30 +91,20 @@ def main(logger, args):
 
         print("*"*20)
         print(f"args.split : {args.split}")
-        # if args.use_random_english_words:
-        #     from english_words import english_words_set
-        #     english_words_set = sorted(english_words_set)
-        #     np.random.seed(int(seed))
 
-        train_counter = Counter()
         test_counter = Counter()
-        # for dp in train_data:
-        #     train_counter[dp["task"]] += 1
+
         for dp in test_data:
             test_counter[dp["task"]] += 1
-        for k, v in train_counter.items():
-            logger.info("[Train] %s\t%d" % (k, v))
-        for k, v in test_counter.items():
-            logger.info("[Dev] %s\t%d" % (k, v))
 
-        logger.info("%s on %s (%d train, %d dev)" % (args.method, args.task, len(train_counter), len(test_counter)))
+        for k, v in test_counter.items():
+            logger.info("[Test] %s\t%d" % (k, v))
+
+        logger.info("%s on %s (%d test)" % (args.method, args.task, len(test_counter)))
 
         for test_task in test_counter:
             curr_test_data = [dp for dp in test_data if dp["task"]==test_task]
-            # curr_train_data = [dp for dp in train_data if dp["task"]==test_task]
             assert len(curr_test_data)>0
-            # assert not args.use_demonstrations or len(curr_train_data)==args.k, \
-            #         (args.use_demonstrations, len(curr_train_data), args.k)
 
             config_file = "config/tasks/{}.json".format(test_task)
             assert os.path.exists(config_file), config_file
@@ -163,16 +153,7 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, seed,
                                       "-s={}".format(seed) if args.use_demonstrations or args.use_random_english_words else "",
                                       "" if add_newlines else "-no-newlines",
                                       "-m={}".format(args.m) if args.supcon else ""))
-    else:
-        assert add_newlines
-        cache_path = os.path.join(args.out_dir, "{}-{}-{}{}{}{}.pkl".format(
-                        task,
-                        args.split,
-                        metaicl_data.method,
-                        "-k={}".format(args.k) if args.use_demonstrations else "",
-                        "-s={}".format(seed) if args.use_demonstrations or args.use_random_english_words else "",
-                        "-randomEnglish" if args.use_random_english_words else ""
-                      ))
+
     if args.topk:
         metaicl_data.tensorize_topk(test_data, add_newlines=add_newlines)
     elif args.randomk:
