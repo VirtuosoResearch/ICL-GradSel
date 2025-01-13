@@ -84,8 +84,8 @@ def main(logger, args):
     for seed in seeds:
 
         ### data ...
-        train_data = load_data(args.task, "train", args.k, seed=seed, config_split=config_split,
-                               datasets=None if args.dataset is None else args.dataset.split(","))
+        # train_data = load_data(args.task, "train", args.k, seed=seed, config_split=config_split,
+        #                        datasets=None if args.dataset is None else args.dataset.split(","))
         test_data = load_data(args.task, args.split, args.k, seed=seed, config_split=config_split,
                              datasets=None if args.dataset is None else args.dataset.split(","), is_null=args.is_null)
 
@@ -98,8 +98,8 @@ def main(logger, args):
 
         train_counter = Counter()
         test_counter = Counter()
-        for dp in train_data:
-            train_counter[dp["task"]] += 1
+        # for dp in train_data:
+        #     train_counter[dp["task"]] += 1
         for dp in test_data:
             test_counter[dp["task"]] += 1
         for k, v in train_counter.items():
@@ -111,7 +111,7 @@ def main(logger, args):
 
         for test_task in test_counter:
             curr_test_data = [dp for dp in test_data if dp["task"]==test_task]
-            curr_train_data = [dp for dp in train_data if dp["task"]==test_task]
+            # curr_train_data = [dp for dp in train_data if dp["task"]==test_task]
             assert len(curr_test_data)>0
             # assert not args.use_demonstrations or len(curr_train_data)==args.k, \
             #         (args.use_demonstrations, len(curr_train_data), args.k)
@@ -126,7 +126,7 @@ def main(logger, args):
                 assert np.all([d["options"]==options for d in curr_test_data])
 
             result = run(logger, test_task, metaicl_data, metaicl_model,
-                         curr_train_data, curr_test_data, seed, checkpoint, is_classification, add_newlines, device)
+                         curr_test_data, seed, checkpoint, is_classification, add_newlines, device)
 
             if result is None:
                 errors.append("%s/%s" % (test_task, seed))
@@ -143,7 +143,7 @@ def main(logger, args):
         logger.info("Please see the error messages")
 
 
-def run(logger, task, metaicl_data, metaicl_model, train_data, test_data, seed,
+def run(logger, task, metaicl_data, metaicl_model, test_data, seed,
         checkpoint, is_classification, add_newlines,device):
 
     if args.do_zeroshot:
@@ -155,14 +155,14 @@ def run(logger, task, metaicl_data, metaicl_model, train_data, test_data, seed,
                                       task,
                                       split_name,
                                       metaicl_data.method,
-                                      "-k={}".format(args.k) if args.use_demonstrations else "",
-                                      "-s={}".format(seed) if args.use_demonstrations or args.use_random_english_words else "",
-                                      "" if add_newlines else "-no-newlines",
-                                      "-randomEnglish" if args.use_random_english_words else "",
                                       "-topk" if args.topk else "",
                                       "-randomk" if args.randomk else "",
                                       "-supcon" if args.supcon else "",
-                                      "-m={}".format(args.m) if args.supcon else "",))
+                                      "-unlabeled" if args.unlabeled else "",
+                                      "-k={}".format(args.k) if args.use_demonstrations else "",
+                                      "-s={}".format(seed) if args.use_demonstrations or args.use_random_english_words else "",
+                                      "" if add_newlines else "-no-newlines",
+                                      "-m={}".format(args.m) if args.supcon else ""))
     else:
         assert add_newlines
         cache_path = os.path.join(args.out_dir, "{}-{}-{}{}{}{}.pkl".format(
@@ -179,8 +179,9 @@ def run(logger, task, metaicl_data, metaicl_model, train_data, test_data, seed,
         metaicl_data.tensorize_randomk(test_data, add_newlines=add_newlines)
     elif args.supcon:
         metaicl_data.tensorize_supcon(test_data, args.m, add_newlines=add_newlines)
-    else:
-        metaicl_data.tensorize(train_data, test_data, add_newlines=add_newlines)
+    elif args.unlabeled:
+        metaicl_data.tensorize_unlabeled(test_data, add_newlines=add_newlines)
+
     metaicl_data.print_tensorized_example()
     logger.info(cache_path)
     prediction_path = cache_path.replace(".pkl", ".txt")
@@ -262,6 +263,7 @@ if __name__=='__main__':
     parser.add_argument("--topk",default=False, action="store_true")
     parser.add_argument("--randomk", default=False, action="store_true")
     parser.add_argument("--supcon", default=False, action="store_true")
+    parser.add_argument("--unlabeled", default=False, action="store_true")
     parser.add_argument("--m", type=int, default=4)
     args = parser.parse_args()
 
