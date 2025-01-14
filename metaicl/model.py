@@ -30,12 +30,12 @@ class MetaICLModel(object):
         self.local_rank = local_rank
 
         if self.local_rank == -1:
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            n_gpu = torch.cuda.device_count()
+            device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+            n_gpu = 1
             ws = 1
         else:  # distributed mode
             torch.cuda.set_device(local_rank)
-            device = torch.device("cuda", local_rank)
+            device = torch.device("cuda:0", local_rank)
             ws = int(os.environ.get("WORLD_SIZE", os.environ.get("SLURM_NTASKS", 1)))
             torch.distributed.init_process_group(backend="nccl")
             n_gpu = 1
@@ -73,10 +73,9 @@ class MetaICLModel(object):
         self.mode = "eval"
 
     def cuda(self):
-        self.model.cuda()
-
-    def to_device(self):
+        # self.model.cuda()
         self.model.to(self.device)
+
 
     def load(self, checkpoint=None, gpt2="gpt2-large"):
         '''
@@ -92,7 +91,7 @@ class MetaICLModel(object):
             if gpt2.startswith("gpt2"):
                 model = AutoModelForCausalLM.from_pretrained(gpt2)
             elif "gpt-j" in gpt2:
-                model = AutoModelForCausalLM.from_pretrained("EleutherAI/gpt-j-6B") #/gpt2)
+                model = AutoModelForCausalLM.from_pretrained("EleutherAI/gpt-j-6b") #/gpt2)
             else:
                 raise NotImplementedError(checkpoint)
             self.model_name = gpt2
@@ -115,7 +114,11 @@ class MetaICLModel(object):
                 self.logger.info("Loading the model from %s" % checkpoint)
             state_dict = torch.load(checkpoint)
             model = AutoModelForCausalLM.from_pretrained(gpt2, state_dict=state_dict)
+        # model.to_device(self.device)
         self.model = model
+        print("self.device : ", self.device)
+        self.model.to(self.device)
+        
 
     def save(self, step):
         if self.local_rank <= 0:

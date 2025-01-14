@@ -1,11 +1,11 @@
-# python test.py --dataset poem_sentiment --gpt2 gpt2-large --method direct --out_dir out/gpt2-large --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 100 --k 1 --topk
+# python test.py --dataset poem_sentiment --gpt2 gpt2-large --method direct --out_dir out/gpt2-large --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 100 --k 7 --topk
 
-# python test.py --dataset poem_sentiment --gpt2 gpt2-large --method direct --out_dir out/gpt2-large --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 100 --k 2 --topk
+# python test.py --dataset poem_sentiment --gpt2 gpt2-large --method direct --out_dir out/gpt2-large --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 100 --k 7 --randomk
 
-# python test.py --dataset poem_sentiment --gpt2 gpt2-large --method direct --out_dir out/gpt2-large --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 100 --k 1 --randomk
+# python test.py --dataset poem_sentiment --gpt2 gpt2-large --method direct --out_dir out/gpt2-large --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 100 --k 14 --unlabeled
 
-# python test.py --dataset poem_sentiment --gpt2 gpt2-large --method direct --out_dir out/gpt2-large --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 100 --k 2 --randomk
+# python test.py --dataset poem_sentiment --gpt2 gpt2-large --method direct --out_dir out/gpt2-large --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 100 --k 7 --randomk
 
-# python test.py --dataset poem_sentiment --gpt2 gpt2-large --method direct --out_dir out/gpt2-large --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 100 --k 2 --unlabeled
+python test.py --dataset poem_sentiment --gpt2 gpt2-large --method direct --out_dir out/gpt2-large --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 100 --k 10 --supcon --m 7
 
-python test.py --dataset poem_sentiment --gpt2 gpt2-large --method direct --out_dir out/gpt2-large --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 100 --k 4 --unlabeled
+python test.py --dataset poem_sentiment --gpt2 gpt2-large --method direct --out_dir out/gpt2-large --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 100 --k 15 --supcon --m 7

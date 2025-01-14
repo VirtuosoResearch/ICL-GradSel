@@ -75,7 +75,7 @@ def main(logger, args):
 
     metaicl_data = MetaICLData(logger, tokenizer, args.method,args.use_demonstrations, args.k,
                                max_length, max_length_per_example)
-
+    # metaicl_data.to(device)
     results = []
     errors = []
     seeds = args.seed.split(",")
@@ -169,8 +169,6 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, seed,
     if args.use_calibration:
         prediction_path = prediction_path.replace(".txt", "-calibrated.txt")
 
-    if os.path.exists(prediction_path):
-        return 0
 
     if os.path.exists(cache_path):
         with open(cache_path, "rb") as f:
