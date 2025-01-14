@@ -17,7 +17,7 @@ parser.add_argument('--do_test', default=True, action='store_true',
 
 There are two steps to implement this project:
 
-1. generate the datas
+### 1. generate the datas
 
 ```bash
 conda create --name metaicl-data python=3.8
@@ -26,11 +26,13 @@ pip install datasets==1.4.0 wget
 cd preprocess
 python {dataset}.py
 ```
-{dataset} here can be `poem_sentiment`, `climate_fever`, `superglue-cb`, `glue-rte`, `glue-sst2`, `glue-wnli`. Pay attention that for some dataset, we only generate the training dataset, so we need to rename `{dataset}_train.jsonl` to `{dataset}_test.jsonl`
+{dataset} here can be `poem_sentiment`, `climate_fever`, `superglue-cb`, `glue-rte`, `glue-sst2`, `glue-wnli`. 
 
-2. implement the experiments
+Pay attention that for some dataset, we only generate the training dataset, so we need to rename `{dataset}_train.jsonl` to `{dataset}_test.jsonl`
 
-Note that a new enviroment need to be built.
+### 2. implement the experiments
+
+**Note that a new enviroment need to be built.**
 
 ```bash
 conda create -n metaicl python=3.8
