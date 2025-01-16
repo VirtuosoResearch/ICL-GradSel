@@ -37,11 +37,11 @@ def main(logger, args):
     else:
         tokenizer = AutoTokenizer.from_pretrained("gpt2")
     add_newlines = True
-    print("tokenizer.vocab_size : ",tokenizer.vocab_size)
-    print(f"PAD token id: {tokenizer.pad_token_id}")
-    print(f"UNK token id: {tokenizer.unk_token_id}")
-    print(f"BOS token id: {tokenizer.bos_token_id}")
-    print(f"EOS token id: {tokenizer.eos_token_id}")
+    # print("tokenizer.vocab_size : ",tokenizer.vocab_size)
+    # print(f"PAD token id: {tokenizer.pad_token_id}")
+    # print(f"UNK token id: {tokenizer.unk_token_id}")
+    # print(f"BOS token id: {tokenizer.bos_token_id}")
+    # print(f"EOS token id: {tokenizer.eos_token_id}")
     ### checkpoint ...
     if not args.do_zeroshot:
         if args.checkpoint is not None:
