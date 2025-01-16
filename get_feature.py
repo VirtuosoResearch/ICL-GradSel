@@ -2,7 +2,8 @@ import json
 import torch
 from transformers import GPT2Tokenizer, GPT2Model
 from torch.utils.data import DataLoader, Dataset
-
+import argparse
+from tqdm import tqdm
 
 class SuperGlueCBDataset(Dataset):
     def __init__(self, file_path):
@@ -81,7 +82,7 @@ def extract_features_lasttoken(model, tokenizer, dataloader, device, output_file
     features = []
 
     with torch.no_grad():
-        for batch in dataloader:
+        for batch in tqdm(dataloader):
             input_texts = batch["input"]
 
             inputs = tokenizer(
@@ -106,9 +107,9 @@ def extract_features_lasttoken(model, tokenizer, dataloader, device, output_file
     print(f"Features saved to {output_file}")
 
 
-def main():
-    file_path = "./data/superglue-cb/superglue-cb_test.jsonl"
-    output_file = "./features/superglue-cb_features.json"
+def main(args):
+    file_path = f"./data/{args.task}/{args.task}_test.jsonl"
+    output_file = f"./features/{args.task}_features.json"
 
     tokenizer = GPT2Tokenizer.from_pretrained("gpt2-large")
     model = GPT2Model.from_pretrained("gpt2-large")
@@ -128,4 +129,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--task", default="superglue-cb", type=str)
+    args = parser.parse_args()
+    main(args)

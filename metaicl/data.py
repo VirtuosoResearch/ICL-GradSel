@@ -234,7 +234,7 @@ class MetaICLData(object):
                 assert "options" not in dp
                 assert type(dp) == str
                 _test_data[i] = {"input": dp, "options": options}
-
+        print("len(_test_data) : ",len(_test_data))
         train_data, test_data =  [], []
 
         for dp in _test_data:
@@ -244,42 +244,31 @@ class MetaICLData(object):
             if "output" not in dp:
                 dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
             test_data.append(dp.copy())
-                        
-            # print("-"*30)
-            # print(dp.keys())
-            # print("-"*30)
+        
+        task = _test_data[0]["task"]
+        features_path = f"./features/{task}_features.json"
+        with open(features_path, "r") as file:
+            test_features = json.load(file)
+        
+        # print("--"*20)
+        # print(len(test_features))
+        # print("--"*20)
 
         if self.use_demonstrations:
             test_texts = [dp["input"] + " " + dp["output"] for dp in test_data]
-            test_embeddings = [
-                self.tokenizer.encode(text, add_special_tokens=False) for text in test_texts
-            ]
-            print(len(test_embeddings[0]), len(test_embeddings[1]), len(test_embeddings[2]))
-            test_embeddings_pad=[]
-            max_length=self.max_length_per_example
-            for i,embedding in enumerate(test_embeddings):
-                if len(embedding) > max_length:
-                    test_embeddings_pad.append(embedding[:max_length])
-                else:
-                    test_embeddings_pad.append(embedding + [0] * (max_length - len(embedding)))
-            # train_embeddings = np.array(train_embeddings)
-            print(len(test_embeddings_pad[0]), len(test_embeddings_pad[1]), len(test_embeddings_pad[2]))
 
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
-
-        # print("test_data : ",test_data)
 
         for dp_idx, dp in enumerate(test_data):
             inputs, outputs, answer = self._prepro_each_datapoint(
                 dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
 
             if self.use_demonstrations:
-                test_text = dp["input"]
-                test_embedding = test_embeddings_pad[dp_idx]            
+                dp_feature = test_features[dp_idx]            
 
                 top_k_neighbors, _, __ = self._select_top_k_neighbors(
-                    test_embedding, test_embeddings_pad, test_data, self.k, dp_idx
+                    dp_feature, test_features, test_data, self.k, dp_idx
                 )
 
                 demonstrations = []
@@ -410,25 +399,31 @@ class MetaICLData(object):
             test_data.append(dp.copy())
 
 
+        task = _test_data[0]["task"]
+        features_path = f"./features/{task}_features.json"
+        with open(features_path, "r") as file:
+            test_features = json.load(file)
+        
+
         if self.use_demonstrations:
             test_texts = [dp["input"] + " " + dp["output"] for dp in test_data]
             test_labels = [dp["output"] for dp in test_data]
-            test_embeddings = [
-                self.tokenizer.encode(text, add_special_tokens=False) for text in test_texts
-            ]
-            print(len(test_embeddings[0]), len(test_embeddings[1]), len(test_embeddings[2]))
-            test_embeddings_pad=[]
-            max_length=self.max_length_per_example
-            for i,embedding in enumerate(test_embeddings):
-                if len(embedding) > max_length:
-                    test_embeddings_pad.append(embedding[:max_length])
-                else:
-                    test_embeddings_pad.append(embedding + [0] * (max_length - len(embedding)))
-            print(len(test_embeddings_pad[0]), len(test_embeddings_pad[1]), len(test_embeddings_pad[2]))
+            # test_embeddings = [
+            #     self.tokenizer.encode(text, add_special_tokens=False) for text in test_texts
+            # ]
+            # print(len(test_embeddings[0]), len(test_embeddings[1]), len(test_embeddings[2]))
+            # test_embeddings_pad=[]
+            # max_length=self.max_length_per_example
+            # for i,embedding in enumerate(test_embeddings):
+            #     if len(embedding) > max_length:
+            #         test_embeddings_pad.append(embedding[:max_length])
+            #     else:
+            #         test_embeddings_pad.append(embedding + [0] * (max_length - len(embedding)))
+            # print(len(test_embeddings_pad[0]), len(test_embeddings_pad[1]), len(test_embeddings_pad[2]))
 
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
-        print("len(test_embeddings_pad) : ",len(test_embeddings_pad), "len(test_labels) : ",len(test_labels))
+        # print("len(test_embeddings_pad) : ",len(test_embeddings_pad), "len(test_labels) : ",len(test_labels))
 
         for dp_idx, dp in enumerate(test_data):
             inputs, outputs, answer = self._prepro_each_datapoint(
@@ -436,16 +431,16 @@ class MetaICLData(object):
 
             if self.use_demonstrations:
                 test_text = dp["input"]
-                test_embedding = test_embeddings_pad[dp_idx]            
+                dp_feature = test_features[dp_idx]            
 
                 top_k_neighbors, top_k_indices, similarities = self._select_top_k_neighbors(
-                    test_embedding, test_embeddings_pad, test_data, self.k, dp_idx
+                    dp_feature, test_features, test_data, self.k, dp_idx
                 )
                 
                 # print("similarities : ",similarities)
 
                 greedy = self.greedy_supcon(
-                    embeddings=test_embeddings_pad,
+                    embeddings=test_features,
                     top_k_indices=top_k_indices,
                     m=m, 
                     candidate_labels=test_labels, 
