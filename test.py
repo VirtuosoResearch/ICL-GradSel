@@ -32,10 +32,16 @@ def main(logger, args):
     device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
     if args.gpt2.startswith("gpt2"):
         tokenizer = GPT2Tokenizer.from_pretrained(args.gpt2)
+    elif "Llama" in args.gpt2:
+        tokenizer = AutoTokenizer.from_pretrained(args.gpt2)
     else:
         tokenizer = AutoTokenizer.from_pretrained("gpt2")
     add_newlines = True
-
+    print("tokenizer.vocab_size : ",tokenizer.vocab_size)
+    print(f"PAD token id: {tokenizer.pad_token_id}")
+    print(f"UNK token id: {tokenizer.unk_token_id}")
+    print(f"BOS token id: {tokenizer.bos_token_id}")
+    print(f"EOS token id: {tokenizer.eos_token_id}")
     ### checkpoint ...
     if not args.do_zeroshot:
         if args.checkpoint is not None:
@@ -83,9 +89,6 @@ def main(logger, args):
 
     for seed in seeds:
 
-        ### data ...
-        # train_data = load_data(args.task, "train", args.k, seed=seed, config_split=config_split,
-        #                        datasets=None if args.dataset is None else args.dataset.split(","))
         test_data = load_data(args.task, args.split, args.k, seed=seed, config_split=config_split,
                              datasets=None if args.dataset is None else args.dataset.split(","), is_null=args.is_null)
 
@@ -154,6 +157,7 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, seed,
                                       "" if add_newlines else "-no-newlines",
                                       "-m={}".format(args.m) if args.supcon else ""))
 
+    datapath = "./data/alldata.jsonl"
     if args.topk:
         metaicl_data.tensorize_topk(test_data, add_newlines=add_newlines)
     elif args.randomk:
@@ -162,6 +166,8 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, seed,
         metaicl_data.tensorize_supcon(test_data, args.m, add_newlines=add_newlines)
     elif args.unlabeled:
         metaicl_data.tensorize_unlabeled(test_data, add_newlines=add_newlines)
+    elif args.multidata:
+        metaicl_data.tensorize_multidata(test_data, datapath, args.m, add_newlines=add_newlines)
 
     metaicl_data.print_tensorized_example()
     logger.info(cache_path)
@@ -243,6 +249,7 @@ if __name__=='__main__':
     parser.add_argument("--randomk", default=False, action="store_true")
     parser.add_argument("--supcon", default=False, action="store_true")
     parser.add_argument("--unlabeled", default=False, action="store_true")
+    parser.add_argument("--multidata", default=False, action="store_true")
     parser.add_argument("--m", type=int, default=4)
     args = parser.parse_args()
 

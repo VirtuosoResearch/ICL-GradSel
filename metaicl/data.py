@@ -244,6 +244,10 @@ class MetaICLData(object):
             if "output" not in dp:
                 dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
             test_data.append(dp.copy())
+                        
+            # print("-"*30)
+            # print(dp.keys())
+            # print("-"*30)
 
         if self.use_demonstrations:
             test_texts = [dp["input"] + " " + dp["output"] for dp in test_data]
@@ -404,6 +408,7 @@ class MetaICLData(object):
             if "output" not in dp:
                 dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
             test_data.append(dp.copy())
+
 
         if self.use_demonstrations:
             test_texts = [dp["input"] + " " + dp["output"] for dp in test_data]
@@ -657,6 +662,94 @@ class MetaICLData(object):
                                       attention_mask=torch.LongTensor(attention_mask),
                                       token_type_ids=torch.LongTensor(token_type_ids))
         self.metadata = metadata
+
+    def _random_datasource(self, task, datapath, m):
+        with open(datapath, "r") as file:
+            data = [json.loads(line) for line in file]
+        
+        candidates = [item for item in data if item['task']!=task]
+        output = random.sample(candidates, m)
+        return output
+
+    def tensorize_multidata(self, _test_data, datapath, m, options=None, add_newlines=True):
+        if options is not None:
+            for i, dp in enumerate(_test_data):
+                assert "options" not in dp
+                assert type(dp) == str
+                _test_data[i] = {"input": dp, "options": options}
+
+        train_data, test_data =  [], []
+
+        for dp in _test_data:
+            assert type(dp) == dict, ("Each example should be a dictionary", dp)
+            assert "input" in dp and "options" in dp and type(dp["options"]) == list, \
+                ("Test example should contain input and options in a list format", dp)
+            if "output" not in dp:
+                dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
+            test_data.append(dp.copy())
+            task = dp["task"]
+
+        if self.use_demonstrations:
+            test_texts = [dp["input"] + " " + dp["output"] for dp in test_data]
+            test_embeddings = [
+                self.tokenizer.encode(text, add_special_tokens=False) for text in test_texts
+            ]
+            print(len(test_embeddings[0]), len(test_embeddings[1]), len(test_embeddings[2]))
+            test_embeddings_pad=[]
+            max_length=self.max_length_per_example
+            for i,embedding in enumerate(test_embeddings):
+                if len(embedding) > max_length:
+                    test_embeddings_pad.append(embedding[:max_length])
+                else:
+                    test_embeddings_pad.append(embedding + [0] * (max_length - len(embedding)))
+            # train_embeddings = np.array(train_embeddings)
+            print(len(test_embeddings_pad[0]), len(test_embeddings_pad[1]), len(test_embeddings_pad[2]))
+
+        input_ids, attention_mask, token_type_ids = [], [], []
+        metadata = []
+
+        # print("test_data : ",test_data)
+
+        for dp_idx, dp in enumerate(test_data):
+            inputs, outputs, answer = self._prepro_each_datapoint(
+                dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
+
+            if self.use_demonstrations:
+                test_text = dp["input"]
+                test_embedding = test_embeddings_pad[dp_idx]            
+
+                random_source = self._random_datasource(
+                    task, datapath, m
+                )
+
+                demonstrations = []
+                for i, neighbor_dp in enumerate(random_source):
+                    input_, output_ = self._prepro_each_datapoint(
+                        neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
+                    demonstrations += input_ + output_
+
+            indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
+
+            metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
+
+            for inputs_, outputs_ in zip(inputs, outputs):
+                if self.use_demonstrations:
+                    inputs_ = demonstrations + inputs_
+                encoded = prepro_sentence_pair_single(
+                    inputs_, outputs_, self.max_length, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
+                    allow_truncation=self.use_demonstrations
+                )
+                input_ids.append(encoded[0])
+                attention_mask.append(encoded[1])
+                token_type_ids.append(encoded[2])
+
+        self.tensorized_inputs = dict(input_ids=torch.LongTensor(input_ids),
+                                      attention_mask=torch.LongTensor(attention_mask),
+                                      token_type_ids=torch.LongTensor(token_type_ids))
+        self.metadata = metadata
+
+
+
 
     def tensorize(self, _train_data, _test_data, options=None,
                   add_newlines=True):
