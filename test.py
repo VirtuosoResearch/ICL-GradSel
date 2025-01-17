@@ -36,11 +36,15 @@ def main(logger, args):
     else:
         tokenizer = AutoTokenizer.from_pretrained("gpt2")
     add_newlines = True
-    # print("tokenizer.vocab_size : ",tokenizer.vocab_size)
-    # print(f"PAD token id: {tokenizer.pad_token_id}")
-    # print(f"UNK token id: {tokenizer.unk_token_id}")
-    # print(f"BOS token id: {tokenizer.bos_token_id}")
-    # print(f"EOS token id: {tokenizer.eos_token_id}")
+    if "Llama" in args.gpt2:
+        special_tokens = {
+            "pad_token": "<pad>",
+            "unk_token": "<unk>",
+            "bos_token": "<bos>",
+            "eos_token": "<eos>"
+        }
+
+        tokenizer.add_special_tokens(special_tokens)
     ### checkpoint ...
     if not args.do_zeroshot:
         if args.checkpoint is not None:
@@ -60,7 +64,6 @@ def main(logger, args):
         checkpoint = None
     
     metaicl_model = MetaICLModel(args.device, logger, args.out_dir)
-    # metaicl_model.to_device()
 
     if not os.path.exists(args.out_dir):
         os.makedirs(args.out_dir)
@@ -119,7 +122,7 @@ def main(logger, args):
                 assert np.all([d["options"]==options for d in curr_test_data])
 
             result = run(logger, test_task, metaicl_data, metaicl_model,
-                         curr_test_data, seed, checkpoint, is_classification, add_newlines)
+                         curr_test_data, seed, checkpoint, is_classification, add_newlines, tokenizer)
 
             if result is None:
                 errors.append("%s/%s" % (test_task, seed))
@@ -137,7 +140,7 @@ def main(logger, args):
 
 
 def run(logger, task, metaicl_data, metaicl_model, test_data, seed,
-        checkpoint, is_classification, add_newlines):
+        checkpoint, is_classification, add_newlines, tokenizer):
 
     if args.do_zeroshot:
         split_name = args.split
@@ -184,6 +187,9 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, seed,
             metaicl_model.load(checkpoint, gpt2=args.gpt2)
             metaicl_model.cuda()
             metaicl_model.eval()
+
+        if "Llama" in args.gpt2:
+            metaicl_model.resize(tokenizer)
 
         losses = metaicl_model.do_inference(metaicl_data, args.test_batch_size)
         with open(cache_path, "wb") as f:

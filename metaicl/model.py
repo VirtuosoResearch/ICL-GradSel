@@ -76,6 +76,9 @@ class MetaICLModel(object):
     def cuda(self):
         # self.model.cuda()
         self.model.to(self.device)
+    
+    def resize(self, tokenizer):
+        self.model.resize_token_embeddings(len(tokenizer))
 
 
     def load(self, checkpoint=None, gpt2="gpt2-large"):
