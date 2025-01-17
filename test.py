@@ -29,7 +29,6 @@ from utils.data import load_data
 def main(logger, args):
     assert (args.dataset is not None and args.task is None) or (args.dataset is None and args.task is not None)
 
-    device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
     if args.gpt2.startswith("gpt2"):
         tokenizer = GPT2Tokenizer.from_pretrained(args.gpt2)
     elif "Llama" in args.gpt2:
@@ -59,7 +58,8 @@ def main(logger, args):
             assert args.checkpoint is not None and os.path.exists(args.checkpoint)
             args.gpt2 = args.checkpoint
         checkpoint = None
-    metaicl_model = MetaICLModel(logger, args.out_dir)
+    
+    metaicl_model = MetaICLModel(args.device, logger, args.out_dir)
     # metaicl_model.to_device()
 
     if not os.path.exists(args.out_dir):
@@ -119,7 +119,7 @@ def main(logger, args):
                 assert np.all([d["options"]==options for d in curr_test_data])
 
             result = run(logger, test_task, metaicl_data, metaicl_model,
-                         curr_test_data, seed, checkpoint, is_classification, add_newlines, device)
+                         curr_test_data, seed, checkpoint, is_classification, add_newlines)
 
             if result is None:
                 errors.append("%s/%s" % (test_task, seed))
@@ -137,7 +137,7 @@ def main(logger, args):
 
 
 def run(logger, task, metaicl_data, metaicl_model, test_data, seed,
-        checkpoint, is_classification, add_newlines,device):
+        checkpoint, is_classification, add_newlines):
 
     if args.do_zeroshot:
         split_name = args.split
@@ -251,6 +251,7 @@ if __name__=='__main__':
     parser.add_argument("--unlabeled", default=False, action="store_true")
     parser.add_argument("--multidata", default=False, action="store_true")
     parser.add_argument("--m", type=int, default=4)
+    parser.add_argument("--device", type=int, default=0)
     args = parser.parse_args()
 
     handlers = [logging.StreamHandler()]

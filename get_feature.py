@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader, Dataset
 import argparse
 from tqdm import tqdm
 
-class SuperGlueCBDataset(Dataset):
+class ICLDataset(Dataset):
     def __init__(self, file_path):
         self.data = []
         with open(file_path, "r") as f:
@@ -118,11 +118,8 @@ def main(args):
 
     tokenizer.pad_token = tokenizer.eos_token
 
-    dataset = SuperGlueCBDataset(file_path)
-    dataloader = DataLoader(dataset, batch_size=1, shuffle=False, collate_fn=lambda x: {
-        "input": [d["input"] for d in x],
-        "label": [d["label"] for d in x]
-    })
+    dataset = ICLDataset(file_path)
+    dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
 
     extract_features_lasttoken(model, tokenizer, dataloader, device, output_file)
 

@@ -17,7 +17,7 @@ from utils.utils import get_checkpoint_id, download_file
 
 class MetaICLModel(object):
 
-    def __init__(self, logger=None, out_dir=None, fp16=True, local_rank=-1):
+    def __init__(self, device_num, logger=None, out_dir=None, fp16=True, local_rank=-1):
         if logger is None:
             class Logger():
                 def info(self, text):
@@ -28,14 +28,15 @@ class MetaICLModel(object):
         self.out_dir = out_dir
         self.fp16 = fp16
         self.local_rank = local_rank
+        self.device_num = device_num
 
         if self.local_rank == -1:
-            device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+            device = torch.device(f"cuda:{self.device_num}" if torch.cuda.is_available() else "cpu")
             n_gpu = 1
             ws = 1
         else:  # distributed mode
             torch.cuda.set_device(local_rank)
-            device = torch.device("cuda:0", local_rank)
+            device = torch.device(f"cuda:{self.device_num}", local_rank)
             ws = int(os.environ.get("WORLD_SIZE", os.environ.get("SLURM_NTASKS", 1)))
             torch.distributed.init_process_group(backend="nccl")
             n_gpu = 1
@@ -87,33 +88,17 @@ class MetaICLModel(object):
         if checkpoint is None and "gpt" not in gpt2:
             checkpoint = gpt2
             gpt2 = "gpt2-large"
-        if checkpoint is None:
-            if gpt2.startswith("gpt2"):
-                model = AutoModelForCausalLM.from_pretrained(gpt2)
-            elif "gpt-j" in gpt2:
-                model = AutoModelForCausalLM.from_pretrained("EleutherAI/gpt-j-6b") #/gpt2)
-            else:
-                raise NotImplementedError(checkpoint)
-            self.model_name = gpt2
+            
+        if gpt2.startswith("gpt2"):
+            model = AutoModelForCausalLM.from_pretrained(gpt2)
+        elif "gpt-j" in gpt2:
+            model = AutoModelForCausalLM.from_pretrained("EleutherAI/gpt-j-6b") #/gpt2)
+        elif "Llama" in gpt2:
+            model = AutoModelForCausalLM.from_pretrained(gpt2)
         else:
-            self.model_name = checkpoint
-            _id = get_checkpoint_id(checkpoint)
-            if _id is not None:
-                method, setting, _id = _id
-                keyword = checkpoint
-                checkpoint = os.path.join("checkpoints", method, setting)
-                if self.local_rank <= 0:
-                    if os.path.exists(checkpoint):
-                        self.logger.info("Reusing checkpoint at %s" % checkpoint)
-                    else:
-                        self.logger.info("Downloading %s in %s", keyword, checkpoint)
-                    download_file(_id, checkpoint)
+            raise NotImplementedError(checkpoint)
+        self.model_name = gpt2
 
-            assert os.path.exists(checkpoint), checkpoint
-            if self.local_rank <= 0:
-                self.logger.info("Loading the model from %s" % checkpoint)
-            state_dict = torch.load(checkpoint)
-            model = AutoModelForCausalLM.from_pretrained(gpt2, state_dict=state_dict)
         # model.to_device(self.device)
         self.model = model
         print("self.device : ", self.device)
@@ -178,74 +163,9 @@ class MetaICLModel(object):
                 self.model, device_ids=[self.local_rank], output_device=self.local_rank)
 
 
-    def do_train(self, data, batch_size, num_training_steps, save_period, log_period,
-                 gradient_accumulation_steps=1, max_grad_norm=1.0):
-        dataloader = data.get_dataloader(batch_size, is_training=True)
-        n_trainable_params = len([param for param in self.model.parameters() if param.requires_grad])
-        n_gpus = torch.cuda.device_count()
-        self.logger.info("Training {} parameters on {} examples for {} steps using {} GPUs".format(
-            n_trainable_params, len(data), num_training_steps, self.n_gpu))
-
-        global_step = 0
-        train_losses = []
-        best_accuracy = -1
-        stop_training=False
-
-        for epoch in range(num_training_steps):
-            for batch in dataloader:
-                global_step += 1
-
-                input_ids=batch[0].to(self.device)
-                attention_mask=batch[1].to(self.device)
-                token_type_ids=batch[2].to(self.device)
-                if len(batch)==3:
-                    labels=None
-                else:
-                    labels=batch[3].to(self.device)
-
-                loss = self.run_model(input_ids, attention_mask, token_type_ids, labels=labels)
-                loss = loss.mean()
-
-                if torch.isnan(loss).data:
-                    print ("Stop training because loss=%s" % (loss.data))
-                    stop_training=True
-                    break
-                train_losses.append(loss.detach().cpu())
-
-                if self.fp16:
-                    from apex import amp
-                    with amp.scale_loss(loss, self.optimizer) as scaled_loss:
-                        scaled_loss.backward()
-                else:
-                    loss.backward()
-
-                if global_step % gradient_accumulation_steps == 0:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_grad_norm)
-
-                    self.optimizer.step()    # We have accumulated enought gradients
-                    if self.scheduler is not None:
-                        self.scheduler.step()
-                    self.model.zero_grad()
-
-                if global_step % log_period == 0:
-                    self.logger.info("local rank %d\tglobal step %d\ttrain loss %.2f" % (self.local_rank, global_step, np.mean(train_losses)))
-                    train_losses = []
-
-                if global_step % save_period == 0:
-                    self.save(global_step)
-
-                if global_step==num_training_steps:
-                    break
-
-            if global_step==num_training_steps:
-                break
-
-        self.logger.info("Finish training")
-
     def do_inference(self, data, batch_size=1, verbose=False):
         dataloader = data.get_dataloader(batch_size, is_training=False)
-        if verbose:
-            dataloader = tqdm(dataloader)
+
         losses = []
         for batch in tqdm(dataloader):
             input_ids=batch[0].cuda()
@@ -255,6 +175,17 @@ class MetaICLModel(object):
                 labels=None
             else:
                 labels=batch[3].cuda()
+            # print("111input_ids.shape:", input_ids.shape)
+            # print("111attention_mask.shape:", attention_mask.shape)
+            # print("111token_type_ids.shape:", token_type_ids.shape)
+            # max_index = input_ids.max().item()
+            # min_index = input_ids.min().item()
+            # print(f"max_index : {max_index} min_index : {min_index}")
+            # assert max_index < vocab_size, f"Index {max_index} out of vocab size {vocab_size}"
+            input_ids = input_ids.to(self.device)
+            attention_mask = attention_mask.to(self.device)
+            token_type_ids = token_type_ids.to(self.device)
+            
             with torch.no_grad():
                 loss = self.run_model(input_ids, attention_mask, token_type_ids, labels=labels)
             losses += loss.cpu().detach().numpy().tolist()
@@ -274,6 +205,9 @@ class MetaICLModel(object):
         return predictions
 
     def run_model(self, input_ids, attention_mask, token_type_ids, labels=None):
+        # print("input_ids.shape:", input_ids.shape)
+        # print("attention_mask.shape:", attention_mask.shape)
+        # print("token_type_ids.shape:", token_type_ids.shape)
         outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
         logits = outputs.logits[..., :-1, :].contiguous()
 
