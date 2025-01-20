@@ -62,7 +62,6 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s
 logger = logging.getLogger(__name__)
 logger.info(args)
 
-# %%
 device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 if args.gpt2.startswith("gpt2"):
     tokenizer = GPT2Tokenizer.from_pretrained(args.gpt2)
@@ -79,7 +78,7 @@ print(f"EOS token id: {tokenizer.eos_token_id}")
 
 add_newlines = not args.gpt2.startswith("gpt2")
 checkpoint = None
-metaicl_model = MetaICLModel(logger, args.out_dir)
+metaicl_model = MetaICLModel(logger=logger, out_dir= args.out_dir, device_num=0)
 metaicl_model.load(checkpoint, gpt2=args.gpt2)
 
 
@@ -182,20 +181,12 @@ for dp in test_data:
         dp["output"] = dp["options"][0]  
     new_test_data.append(dp.copy())
 
-if args.use_demonstrations:
-    test_texts = [dp["input"] + " " + dp["output"] for dp in new_test_data]
+test_texts = [dp["input"] + " " + dp["output"] for dp in new_test_data]
 
-    test_embeddings = [
-        tokenizer.encode(text, add_special_tokens=False) for text in test_texts
-    ]
-
-    test_embeddings_pad=[]
-    max_length=max_length_per_example
-    for i,embedding in enumerate(test_embeddings):
-        if len(embedding) > max_length:
-            test_embeddings_pad.append(embedding[:max_length])
-        else:
-            test_embeddings_pad.append(embedding + [0] * (max_length - len(embedding)))
+task = test_data[0]["task"]
+features_path = f"./features/{task}_features.json"
+with open(features_path, "r") as file:
+    test_features = json.load(file)
 
 # %%
 from metaicl.data import prepro_sentence_pair_single
@@ -208,7 +199,7 @@ def select_top_k_neighbors(test_sample_embedding, test_embeddings, test_data, k,
         if idx == dp_idx:
             similarities.append(-1.0)
             continue
-        similarity = 1 - cosine(np.array(test_sample_embedding)/100, np.array(dp)/100)
+        similarity = 1 - cosine(test_sample_embedding, dp)
         similarities.append(similarity)
 
     top_k_indices = np.argsort(similarities)[-k:][::-1]
@@ -235,10 +226,11 @@ input_tokens = tokenizer("Input: " + dp["input"] + " " + "Label: ")["input_ids"]
 output_tokens = tokenizer(dp["output"])["input_ids"]
 options = [dp["options"].index(dp["output"])]
 
-test_embedding = test_embeddings_pad[dp_idx]            
+dp_feature = test_features[dp_idx]
+
 args.k = 2
 top_k_neighbors, _, __ = select_top_k_neighbors(
-    test_embedding, test_embeddings_pad, test_data, args.k, dp_idx
+    dp_feature, test_features, test_data, args.k, dp_idx
 )
 
 metaicl_model.model.eval()
@@ -256,10 +248,9 @@ for trial in range(100):
     demonstrations = []
     # add unlabled examples 
     unlabeled_k = 6
-    ransom_subset = np.random.choice(len(test_data), unlabeled_k, replace=False)
-    for i in ransom_subset:
-        if i == dp_idx:
-            continue
+    candidates = [i for i in range(len(test_data)) if i!=dp_idx]
+    random_indices = random.sample(candidates, unlabeled_k)
+    for i in random_indices:
         unlabel_dp = test_data[i]
         tmp_str = "Input: " + unlabel_dp["input"] + " " + "Label: " + "\n"
         demonstrations += tokenizer(tmp_str)["input_ids"]
