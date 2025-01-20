@@ -39,7 +39,9 @@ conda create -n metaicl python=3.8
 conda activate metaicl
 # pip install the correct torch version here
 pip install git+https://github.com/huggingface/transformers.git@c37573806ab3526dd805c49cbe2489ad4d68a9d7
-pip install openai
+pip install -U scikit-learn
+pip install --upgrade transformers huggingface_hub
+bash build_feature.sh
 ```
 
 Commands to run inferences (Use gpt2-large as an example).
