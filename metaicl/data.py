@@ -552,14 +552,11 @@ class MetaICLData(object):
             all_loss_list.append(simcon_loss)
 
         point_score = [1001.0 for i in top_k_indices]
-        # print("point_score : ",point_score)
-        # print("len(point_score) : ",len(point_score))
         cnt_point = [0 for i in top_k_indices]
         for i, combination in enumerate(all_combinations):
             if i>=len(all_combinations)/2: break
             # print(f"combination: {combination}")
             for j, indice in enumerate(top_k_indices):
-                # print(f"indice: {indice}, point_score[j] : {point_score[j]}")
                 if indice in combination:
                     if point_score[j]>1000.0:
                         point_score[j] = all_loss_list[i]
@@ -567,18 +564,13 @@ class MetaICLData(object):
                         point_score[j]+=all_loss_list[i]
                     cnt_point[j]+=1
         for i in range(len(point_score)):
-            if point_score[i] is not float("inf"):
+            if point_score[i] <= 1000.0:
                 point_score[i]/=cnt_point[i]
         
         indexed_score = list(enumerate(point_score))
         sorted_score = sorted(indexed_score, key=lambda x: x[1])
         min_indices = [x[0] for x in sorted_score[:m]]
         real_indices = [top_k_indices[x] for x in min_indices]
-
-        # print("-*-"*10)
-        # print(f"top_k_indices : {top_k_indices}; point_score : {point_score}; cnt_point : {cnt_point}")
-        # print(f"real_indices : {real_indices}")
-        # print("-*-"*10)
 
         return [test_data[x] for x in real_indices]
 

@@ -155,11 +155,11 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, seed,
                                       "-randomk" if args.randomk else "",
                                       "-supcon" if args.supcon else "",
                                       "-unlabeled" if args.unlabeled else "",
+                                      "-ranens" if args.ranens else "",
                                       "-k={}".format(args.k) if args.use_demonstrations else "",
                                       "-s={}".format(seed) if args.use_demonstrations or args.use_random_english_words else "",
                                       "" if add_newlines else "-no-newlines",
-                                      "-m={}".format(args.m) if args.supcon else "",
-                                      "-ranens" if args.ranens else ""))
+                                      "-m={}".format(args.m) if args.supcon or args.ranens else ""))
 
     datapath = "./data/alldata.jsonl"
     if args.topk:
