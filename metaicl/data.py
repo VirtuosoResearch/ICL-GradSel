@@ -265,6 +265,8 @@ class MetaICLData(object):
                 dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
 
             if self.use_demonstrations:
+                # if dp_idx>=len(test_features):
+                #     print(f"len(test_data): {len(test_data)} dp_idx: {dp_idx} len(test_features): {len(test_features)}")
                 dp_feature = test_features[dp_idx]            
 
                 top_k_neighbors, _, __ = self._select_top_k_neighbors(
