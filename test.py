@@ -147,7 +147,7 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, seed,
         if args.is_null:
             split_name += "-null"
         cache_path = os.path.join(args.out_dir,
-                                  "{}-{}-{}{}{}{}{}{}{}{}{}.pkl".format(
+                                  "{}-{}-{}{}{}{}{}{}{}{}{}{}.pkl".format(
                                       task,
                                       split_name,
                                       metaicl_data.method,
@@ -158,7 +158,8 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, seed,
                                       "-k={}".format(args.k) if args.use_demonstrations else "",
                                       "-s={}".format(seed) if args.use_demonstrations or args.use_random_english_words else "",
                                       "" if add_newlines else "-no-newlines",
-                                      "-m={}".format(args.m) if args.supcon else ""))
+                                      "-m={}".format(args.m) if args.supcon else "",
+                                      "-ranens" if args.ranens else ""))
 
     datapath = "./data/alldata.jsonl"
     if args.topk:
@@ -171,6 +172,8 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, seed,
         metaicl_data.tensorize_unlabeled(test_data, add_newlines=add_newlines)
     elif args.multidata:
         metaicl_data.tensorize_multidata(test_data, datapath, args.m, add_newlines=add_newlines)
+    elif args.ranens:
+        metaicl_data.tensorize_ranens(test_data, args.m, add_newlines=add_newlines)
 
     metaicl_data.print_tensorized_example()
     logger.info(cache_path)
@@ -256,6 +259,7 @@ if __name__=='__main__':
     parser.add_argument("--supcon", default=False, action="store_true")
     parser.add_argument("--unlabeled", default=False, action="store_true")
     parser.add_argument("--multidata", default=False, action="store_true")
+    parser.add_argument("--ranens", default=False, action="store_true")
     parser.add_argument("--m", type=int, default=4)
     parser.add_argument("--device", type=int, default=0)
     args = parser.parse_args()
