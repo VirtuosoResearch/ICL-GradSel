@@ -62,7 +62,7 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s
 logger = logging.getLogger(__name__)
 logger.info(args)
 
-device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 if args.gpt2.startswith("gpt2"):
     tokenizer = GPT2Tokenizer.from_pretrained(args.gpt2)
 elif "Llama" in args.gpt2:
@@ -228,7 +228,7 @@ options = [dp["options"].index(dp["output"])]
 
 dp_feature = test_features[dp_idx]
 
-args.k = 2
+args.k = 3
 top_k_neighbors, _, __ = select_top_k_neighbors(
     dp_feature, test_features, test_data, args.k, dp_idx
 )
@@ -241,14 +241,15 @@ for i, neighbor_dp in enumerate(top_k_neighbors):
     tmp_str = "Input: " + neighbor_dp["input"] + " " + "Label: " + neighbor_dp["output"] + "\n"
     demonstrations += tokenizer(tmp_str)["input_ids"]
 _, before_loss = run_a_forward_pass(demonstrations+input_tokens, output_tokens, tokenizer)
-print(before_loss)
+print("before_loss",before_loss)
 
 losses = []
 for trial in range(100):
     demonstrations = []
     # add unlabled examples 
-    unlabeled_k = 6
+    unlabeled_k = 3
     candidates = [i for i in range(len(test_data)) if i!=dp_idx]
+    random.seed(trial)
     random_indices = random.sample(candidates, unlabeled_k)
     for i in random_indices:
         unlabel_dp = test_data[i]
@@ -260,26 +261,45 @@ for trial in range(100):
         tmp_str =  "Input: " + neighbor_dp["input"] + " " + "Label: " + neighbor_dp["output"] + "\n"
         demonstrations += tokenizer(tmp_str)["input_ids"]
 
-
-    # encoded = prepro_sentence_pair_single(
-    #             demonstrations + input_tokens, output_tokens, max_length=1024, bos_token_id=tokenizer.bos_token_id, eos_token_id=tokenizer.eos_token_id,
-    #             allow_truncation=args.use_demonstrations
-    #     )
-    # input_ids = torch.LongTensor([encoded[0]])
-    # attention_mask = torch.LongTensor([encoded[1]])
-    # token_type_ids = torch.LongTensor([encoded[2]])
-
-    # input_ids = input_ids.to(device)
-    # attention_mask = attention_mask.to(device)
-    # token_type_ids = token_type_ids.to(device)
-    # results = metaicl_model.run_model(input_ids, attention_mask, token_type_ids)
     input_ids, results = run_a_forward_pass(demonstrations + input_tokens, output_tokens, tokenizer)
-    if trial % 10 == 0:
+    if trial % 20 == 0:
         print(tokenizer.batch_decode(input_ids)[0])
         print(results)
     losses.append(results)
 
 losses = np.array(losses)
+
+prediction_data = [ ]
+
+for idx in range(100):
+    prediction_data.append({
+        "indices": idx,
+        "options": dp["options"]
+    })
+
+def do_predict(data, losses, verbose=False):
+
+    assert len(losses) == 100 
+    predictions = []
+    print("len(data):", len(data))
+    for idx, dp in enumerate(data):
+        print(f"Processing input {idx + 1}/{len(data)}")
+        print("dp[\"options\"]:", dp["options"])
+
+        curr_label_losses = [
+            np.mean([losses[trial_idx] for trial_idx in indices])
+            for indices in dp["indices"]
+        ]
+
+        prediction_idx = sorted(enumerate(curr_label_losses), key=lambda x: x[1])[0][0]
+        prediction = dp["options"][prediction_idx]
+        predictions.append(prediction.strip())
+
+    return predictions
+
+predictions = do_predict(prediction_data, losses=losses, verbose=True)
+print("Final Predictions for test_data[0]:", predictions)
+
 print((losses < before_loss).sum())
 print(min(losses))
 print((before_loss-min(losses) )/before_loss)
