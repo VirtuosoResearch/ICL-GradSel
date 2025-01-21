@@ -41,6 +41,12 @@ pip install --upgrade transformers huggingface_hub
 bash build_feature.sh
 ```
 
+First need to generate data features:
+```bash
+python get_feature.py --task {task}
+```
+
+
 Commands to run inferences (Use gpt2-large as an example).
 ```bash
 # TopK

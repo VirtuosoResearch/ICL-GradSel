@@ -46,7 +46,7 @@ def main():
 
     def format_data(data, task_name):
         formatted = []
-        options = ["entailment", "not_entailment"]
+        options = ["not_equivalent", "equivalent"]
         for input_text, output in data:
             formatted.append({
                 "task": task_name,
