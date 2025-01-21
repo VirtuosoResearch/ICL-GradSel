@@ -1,0 +1,241 @@
+# Copyright (c) Facebook, Inc. and its affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the license found in the
+# LICENSE file in the root directory of this source tree.
+
+import numpy as np
+import os
+import torch
+import torch.nn.functional as F
+
+from tqdm import tqdm
+from transformers import Adafactor, AdamW, get_linear_schedule_with_warmup
+from transformers import AutoModelForCausalLM
+
+from utils.utils import get_checkpoint_id, download_file
+
+class MetaICLModel(object):
+
+    def __init__(self, device_num, logger=None, out_dir=None, fp16=True, local_rank=-1):
+        if logger is None:
+            class Logger():
+                def info(self, text):
+                    print ("Logging from MetaICLModel:\t", text)
+            logger = Logger()
+
+        self.logger = logger
+        self.out_dir = out_dir
+        self.fp16 = fp16
+        self.local_rank = local_rank
+        self.device_num = device_num
+
+        if self.local_rank == -1:
+            device = torch.device(f"cuda:{self.device_num}" if torch.cuda.is_available() else "cpu")
+            n_gpu = 1
+            ws = 1
+        else:  # distributed mode
+            torch.cuda.set_device(local_rank)
+            device = torch.device(f"cuda:{self.device_num}", local_rank)
+            ws = int(os.environ.get("WORLD_SIZE", os.environ.get("SLURM_NTASKS", 1)))
+            torch.distributed.init_process_group(backend="nccl")
+            n_gpu = 1
+
+        self.n_gpu = n_gpu
+        self.device = device
+        if self.local_rank <= 0:
+            logger.info("Setting up for local_rank=%d, world_size=%d" % (self.local_rank, ws))
+        self.model_name = None
+        self.model = None
+        self.mode = None
+
+    def __str__(self):
+        text = "[MetaICL Model]: "
+        if self.model_name is None:
+            text += "No model loaded yet"
+        else:
+            text += self.model_name
+            if self.mode is None:
+                text += " (no mode setted - try .train() or .eval()"
+            else:
+                text += " (%s mode)" % self.mode
+        text += "\nusing device %s, %d gpus, local_rank=%d" % (self.device, self.n_gpu, self.local_rank)
+        return ("="*50) + "\n" + text + "\n" + ("="*50)
+
+    def is_none(self):
+        return self.model is None
+
+    def train(self):
+        self.model.train()
+        self.mode = "train"
+
+    def eval(self):
+        self.model.eval()
+        self.mode = "eval"
+
+    def cuda(self):
+        # self.model.cuda()
+        self.model.to(self.device)
+    
+    def resize(self, tokenizer):
+        self.model.resize_token_embeddings(len(tokenizer))
+
+
+    def load(self, checkpoint=None, gpt2="gpt2-large"):
+        '''
+        checkpoint can be either keyword of the model or path to the checkpoint file
+        '''
+        if checkpoint is not None and checkpoint.startswith("gpt"):
+            gpt2 = checkpoint
+            checkpoint = None
+        if checkpoint is None and "gpt" not in gpt2:
+            checkpoint = gpt2
+            gpt2 = "gpt2-large"
+            
+        if gpt2.startswith("gpt2"):
+            model = AutoModelForCausalLM.from_pretrained(gpt2)
+        elif "gpt-j" in gpt2:
+            model = AutoModelForCausalLM.from_pretrained("EleutherAI/gpt-j-6b") #/gpt2)
+        elif "Llama" in gpt2:
+            model = AutoModelForCausalLM.from_pretrained(gpt2)
+        else:
+            raise NotImplementedError(checkpoint)
+        self.model_name = gpt2
+
+        # model.to_device(self.device)
+        self.model = model
+        print("self.device : ", self.device)
+        self.model.to(self.device)
+        
+
+    def save(self, step):
+        if self.local_rank <= 0:
+            model_state_dict = {key[7:] if key.startswith("module.") else key: value.cpu()
+                                for key, value in self.model.state_dict().items()}
+            torch.save(model_state_dict, os.path.join(self.out_dir, "model-{}.pt".format(step)))
+            self.logger.info("Saving model parameters at step=%d" % step)
+
+    def setup_optimizer(self, optimization, num_training_steps, lr, weight_decay, warmup_steps):
+        no_decay = ['bias', 'LayerNorm.weight']
+        optimizer_grouped_parameters = [
+                {'params': [p for n, p in self.model.named_parameters() if not any(nd in n for nd in no_decay)], 'weight_decay': weight_decay},
+                {'params': [p for n, p in self.model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+        ]
+
+        if optimization=="adafactor":
+            optimizer = Adafactor(optimizer_grouped_parameters,
+                                  lr=lr,
+                                  relative_step=False,
+                                  warmup_init=False,
+                                  weight_decay=weight_decay)
+            scheduler = None
+        elif optimization.startswith("adamw"):
+            optimizer = AdamW(optimizer_grouped_parameters,
+                              lr=lr,
+                              eps=1e-08,
+                              weight_decay=weight_decay)
+            if self.fp16:
+                self.model, optimizer = setup_fp16(self.model, optimizer)
+            if optimization=="adamw":
+                scheduler = get_linear_schedule_with_warmup(optimizer,
+                                                            num_warmup_steps=warmup_steps,
+                                                            num_training_steps=num_training_steps)
+            else:
+                raise NotImplementedError()
+        elif optimization=="8bit-adam":
+            import bitsandbytes as bnb
+            optimizer = bnb.optim.Adam8bit(optimizer_grouped_parameters,
+                                           lr=lr, betas=(0.9, 0.995))
+            if self.fp16:
+                self.model, optimizer = setup_fp16(self.model, optimizer)
+            scheduler = get_linear_schedule_with_warmup(optimizer,
+                                                        num_warmup_steps=warmup_steps,
+                                                        num_training_steps=num_training_steps)
+        else:
+            raise NotImplementedError()
+
+        self.optimizer = optimizer
+        self.scheduler = scheduler
+
+    def parallel(self):
+        if self.n_gpu > 1:
+            self.model = torch.nn.DataParallel(self.model)
+
+        if self.local_rank != -1:
+            self.model = torch.nn.parallel.DistributedDataParallel(
+                self.model, device_ids=[self.local_rank], output_device=self.local_rank)
+
+
+    def do_inference(self, data, batch_size=1, verbose=False):
+        dataloader = data.get_dataloader(batch_size, is_training=False)
+
+        losses = []
+        for batch in tqdm(dataloader):
+            input_ids=batch[0].cuda()
+            attention_mask=batch[1].cuda()
+            token_type_ids=batch[2].cuda()
+            if len(batch)==3:
+                labels=None
+            else:
+                labels=batch[3].cuda()
+            # print("111input_ids.shape:", input_ids.shape)
+            # print("111attention_mask.shape:", attention_mask.shape)
+            # print("111token_type_ids.shape:", token_type_ids.shape)
+            # max_index = input_ids.max().item()
+            # min_index = input_ids.min().item()
+            # print(f"max_index : {max_index} min_index : {min_index}")
+            # assert max_index < vocab_size, f"Index {max_index} out of vocab size {vocab_size}"
+            input_ids = input_ids.to(self.device)
+            attention_mask = attention_mask.to(self.device)
+            token_type_ids = token_type_ids.to(self.device)
+            
+            with torch.no_grad():
+                loss = self.run_model(input_ids, attention_mask, token_type_ids, labels=labels)
+            losses += loss.cpu().detach().numpy().tolist()
+        return losses
+
+    def do_predict(self, data, batch_size=1, losses=None, verbose=False):
+        if losses is None:
+            losses = self.do_inference(data, batch_size, verbose=verbose)
+        losses = np.array(losses)
+        assert len(losses)==len(data)
+        predictions = []
+        for idx, dp in enumerate(data.metadata):
+            curr_label_losses = [np.sum(losses[indices]) for indices in dp["indices"]]
+            prediction_idx = sorted(enumerate(curr_label_losses), key=lambda x: x[1])[0][0]
+            prediction = dp["options"][prediction_idx]
+            predictions.append(prediction.strip())
+        return predictions
+
+    def run_model(self, input_ids, attention_mask, token_type_ids, labels=None):
+        # print("input_ids.shape:", input_ids.shape)
+        # print("attention_mask.shape:", attention_mask.shape)
+        # print("token_type_ids.shape:", token_type_ids.shape)
+        outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
+        logits = outputs.logits[..., :-1, :].contiguous()
+
+        if labels is None:
+            labels = input_ids
+        labels = labels[..., 1:].contiguous()
+        label_mask = token_type_ids[..., 1:].contiguous()
+
+        loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
+        losses = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1)) # [batch_size, length]
+
+        losses = losses.view(logits.size(0), logits.size(1)) * label_mask
+        return torch.sum(losses, axis=1) / torch.sum(label_mask, axis=1)
+
+def setup_fp16(model, optimizer):
+    try:
+        import apex
+        from apex import amp
+        apex.amp.register_half_function(torch, "einsum")
+    except ImportError:
+        raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
+
+    fp16_opt_level = "O1"
+    model, optimizer = amp.initialize(model, optimizer, opt_level=fp16_opt_level)
+    return model, optimizer
+
+
+
