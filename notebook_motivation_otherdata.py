@@ -29,8 +29,8 @@ class args:
     log_file = None
 
     task = None
-    dataset = "superglue-cb"
-    k = 2
+    dataset = "poem_sentiment"
+    k = 3
     seed = "42"
     device = 1
 
@@ -186,6 +186,14 @@ def select_top_k_neighbors(test_sample_embedding, test_embeddings, test_data, k,
     top_k_indices = np.argsort(similarities)[-k:][::-1]
     return [test_data[i] for i in top_k_indices], top_k_indices , similarities
 
+def _select_random_k_neighbors(test_sample_embedding, test_embeddings, test_data, k, dp_idx):
+        
+        length = len(test_data)
+        candidates = [i for i in range(length) if i!= dp_idx]
+        random_indices = random.sample(candidates, k)
+
+        return [test_data[i] for i in random_indices]
+
 def run_a_forward_pass(input_tokens, output_tokens, tokenizer):
     encoded = prepro_sentence_pair_single(
                 input_tokens, output_tokens, max_length=1024, bos_token_id=tokenizer.bos_token_id, eos_token_id=tokenizer.eos_token_id,
@@ -212,7 +220,7 @@ options = [dp["options"].index(dp["output"])]
 accuracies = []
 args.k = 3 # select three labeled
 unlabeled_k = 3 
-num_trials = 100
+num_trials = 1
 
 for dp_idx in range(len(test_data)):
     dp = test_data[dp_idx]
@@ -223,55 +231,45 @@ for dp_idx in range(len(test_data)):
 
     dp_feature = test_features[dp_idx]
 
-    top_k_neighbors, _, __ = select_top_k_neighbors(
+    random_k_neighbors = _select_random_k_neighbors(
         dp_feature, test_features, test_data, args.k, dp_idx
     )
 
     metaicl_model.model.eval()
     metaicl_model.model.to(device)
 
-    # demonstrations = []
-    # for i, neighbor_dp in enumerate(top_k_neighbors):
-    #     tmp_str = "Input: " + neighbor_dp["input"] + " " + "Label: " + neighbor_dp["output"] + "\n"
-    #     demonstrations += tokenizer(tmp_str)["input_ids"]
-    # _, before_loss = run_a_forward_pass(demonstrations+input_tokens, output_tokens, tokenizer)
-    # logger.info("before_loss",before_loss)
 
     losses = []
-    for trial in range(num_trials):
-        demonstrations = []
-        # add unlabled examples 
-        candidates = [i for i in range(len(test_data)) if i!=dp_idx]
-        random.seed(trial)
-        random_indices = random.sample(candidates, unlabeled_k)
-        for i in random_indices:
-            unlabel_dp = test_data[i]
-            tmp_str = "Input: " + unlabel_dp["input"] + " " + "Label: " + "\n"
-            demonstrations += tokenizer(tmp_str)["input_ids"]
-        
-        # add labled examples
-        for i, neighbor_dp in enumerate(top_k_neighbors):
-            tmp_str =  "Input: " + neighbor_dp["input"] + " " + "Label: " + neighbor_dp["output"] + "\n"
-            demonstrations += tokenizer(tmp_str)["input_ids"]
+    demonstrations = []
+    # add unlabled examples 
+    # candidates = [i for i in range(len(test_data)) if i!=dp_idx]
+    # random.seed(trial)
+    topk_data, topk_indices, __ = select_top_k_neighbors(
+        dp_feature, test_features, test_data, unlabeled_k, dp_idx
+    )
+    for i in topk_indices:
+        unlabel_dp = test_data[i]
+        tmp_str = "Input: " + unlabel_dp["input"] + " " + "Label: " + "\n"
+        demonstrations += tokenizer(tmp_str)["input_ids"]
+    
+    # add labled examples
+    for i, neighbor_dp in enumerate(random_k_neighbors):
+        tmp_str =  "Input: " + neighbor_dp["input"] + " " + "Label: " + neighbor_dp["output"] + "\n"
+        demonstrations += tokenizer(tmp_str)["input_ids"]
+    one_trial_losses = []
+    for option_token in option_tokens:
+        input_ids, results = run_a_forward_pass(demonstrations +    input_tokens, option_token, tokenizer)
+        one_trial_losses.append(results)
+    
+    # if (trial+1) % 10 == 0:
+    logger.info(one_trial_losses)
+    min_loss = 1e6; max_accuracy = 0
+    label = np.argmin(one_trial_losses)
+    accuracy = int(dp["options"][label] == dp['output'])
+    min_loss = min(min_loss, np.min(one_trial_losses))
+    max_accuracy = max(max_accuracy, accuracy)
 
-        one_trial_losses = []
-        for option_token in option_tokens:
-            input_ids, results = run_a_forward_pass(demonstrations +    input_tokens, option_token, tokenizer)
-            one_trial_losses.append(results)
-        
-        if (trial+1) % 10 == 0:
-            logger.info(one_trial_losses)
 
-            min_loss = 1e6; max_accuracy = 0
-            for one_trial_losses in losses:
-                label = np.argmin(one_trial_losses)
-                accuracy = int(dp["options"][label] == dp['output'])
-                min_loss = min(min_loss, np.min(one_trial_losses))
-                max_accuracy = max(max_accuracy, accuracy)
-            if max_accuracy == 1:
-                break
-
-        losses.append(one_trial_losses)
 
     logger.info("min_loss: %f, max_accuracy: %f", min_loss, max_accuracy)
     accuracies.append(max_accuracy)
