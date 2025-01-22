@@ -32,7 +32,7 @@ class args:
     dataset = "superglue-cb"
     k = 2
     seed = "42"
-    device = 1
+    device = 0
 
     test_batch_size = 4
     global_step = None
@@ -70,16 +70,16 @@ elif "Llama" in args.gpt2:
     tokenizer = AutoTokenizer.from_pretrained(args.gpt2)
 else:
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
-print("tokenizer.vocab_size : ",tokenizer.vocab_size)
-print(f"PAD token id: {tokenizer.pad_token_id}")
-print(f"UNK token id: {tokenizer.unk_token_id}")
-print(f"BOS token id: {tokenizer.bos_token_id}")
-print(f"EOS token id: {tokenizer.eos_token_id}")
+logger.info("tokenizer.vocab_size : %d",tokenizer.vocab_size)
+logger.info(f"PAD token id: {tokenizer.pad_token_id}")
+logger.info(f"UNK token id: {tokenizer.unk_token_id}")
+logger.info(f"BOS token id: {tokenizer.bos_token_id}")
+logger.info(f"EOS token id: {tokenizer.eos_token_id}")
 
 
 add_newlines = not args.gpt2.startswith("gpt2")
 checkpoint = None
-metaicl_model = MetaICLModel(logger=logger, out_dir= args.out_dir, device_num=0)
+metaicl_model = MetaICLModel(logger=logger, out_dir= args.out_dir, device_num=args.device)
 metaicl_model.load(checkpoint, gpt2=args.gpt2)
 
 
@@ -94,7 +94,7 @@ if args.use_demonstrations:
     orig_max_length = max_length
     max_length = min(max_length * args.k, 1024)
 
-print("batch_size=%d\tmax_length=%d\tmax_length_per_example=%d" % (
+logger.info("batch_size=%d\tmax_length=%d\tmax_length_per_example=%d" % (
     args.test_batch_size, max_length, max_length_per_example))
 
 metaicl_data = MetaICLData(logger, tokenizer, args.method, args.use_demonstrations, args.k,
@@ -115,9 +115,9 @@ for dp in test_data:
     test_counter[dp["task"]] += 1
 
 for k, v in test_counter.items():
-    print("[Test] %s\t%d" % (k, v))
+    logger.info("[Test] %s\t%d" % (k, v))
 
-print("%s on %s (%d test)" % (args.method, args.task, len(test_counter)))
+logger.info("%s on %s (%d test)" % (args.method, args.task, len(test_counter)))
 
 # %%
 task = test_task = args.dataset
@@ -186,6 +186,14 @@ def select_top_k_neighbors(test_sample_embedding, test_embeddings, test_data, k,
     top_k_indices = np.argsort(similarities)[-k:][::-1]
     return [test_data[i] for i in top_k_indices], top_k_indices , similarities
 
+def _select_random_k_neighbors(test_sample_embedding, test_embeddings, test_data, k, dp_idx):
+        
+        length = len(test_data)
+        candidates = [i for i in range(length) if i!= dp_idx]
+        random_indices = random.sample(candidates, k)
+
+        return [test_data[i] for i in random_indices]
+
 def run_a_forward_pass(input_tokens, output_tokens, tokenizer):
     encoded = prepro_sentence_pair_single(
                 input_tokens, output_tokens, max_length=1024, bos_token_id=tokenizer.bos_token_id, eos_token_id=tokenizer.eos_token_id,
@@ -212,17 +220,18 @@ options = [dp["options"].index(dp["output"])]
 accuracies = []
 args.k = 3 # select three labeled
 unlabeled_k = 3 
-num_trials = 100
+num_trials = 1
+
 for dp_idx in range(len(test_data)):
     dp = test_data[dp_idx]
     input_tokens = tokenizer("Input: " + dp["input"] + " " + "Label: ")["input_ids"]
     output_tokens = tokenizer(dp["output"])["input_ids"]
-    print(dp['output'])
-    print(dp['options'])
+    logger.info(dp['output'])
+    logger.info(dp['options'])
 
     dp_feature = test_features[dp_idx]
 
-    top_k_neighbors, _, __ = select_top_k_neighbors(
+    random_k_neighbors = _select_random_k_neighbors(
         dp_feature, test_features, test_data, args.k, dp_idx
     )
 
@@ -234,50 +243,46 @@ for dp_idx in range(len(test_data)):
     #     tmp_str = "Input: " + neighbor_dp["input"] + " " + "Label: " + neighbor_dp["output"] + "\n"
     #     demonstrations += tokenizer(tmp_str)["input_ids"]
     # _, before_loss = run_a_forward_pass(demonstrations+input_tokens, output_tokens, tokenizer)
-    # print("before_loss",before_loss)
+    # logger.info("before_loss",before_loss)
 
     losses = []
-    for trial in range(num_trials):
-        demonstrations = []
-        # add unlabled examples 
-        candidates = [i for i in range(len(test_data)) if i!=dp_idx]
-        random.seed(trial)
-        random_indices = random.sample(candidates, unlabeled_k)
-        for i in random_indices:
-            unlabel_dp = test_data[i]
-            tmp_str = "Input: " + unlabel_dp["input"] + " " + "Label: " + "\n"
-            demonstrations += tokenizer(tmp_str)["input_ids"]
-        
-        # add labled examples
-        for i, neighbor_dp in enumerate(top_k_neighbors):
-            tmp_str =  "Input: " + neighbor_dp["input"] + " " + "Label: " + neighbor_dp["output"] + "\n"
-            demonstrations += tokenizer(tmp_str)["input_ids"]
+    demonstrations = []
+    # add unlabled examples 
+    # candidates = [i for i in range(len(test_data)) if i!=dp_idx]
+    # random.seed(trial)
+    topk_data, topk_indices, __ = select_top_k_neighbors(
+        dp_feature, test_features, test_data, unlabeled_k, dp_idx
+    )
+    for i in topk_indices:
+        unlabel_dp = test_data[i]
+        tmp_str = "Input: " + unlabel_dp["input"] + " " + "Label: " + "\n"
+        demonstrations += tokenizer(tmp_str)["input_ids"]
+    
+    # add labled examples
+    for i, neighbor_dp in enumerate(random_k_neighbors):
+        tmp_str =  "Input: " + neighbor_dp["input"] + " " + "Label: " + neighbor_dp["output"] + "\n"
+        demonstrations += tokenizer(tmp_str)["input_ids"]
+    one_trial_losses = []
+    for option_token in option_tokens:
+        input_ids, results = run_a_forward_pass(demonstrations +    input_tokens, option_token, tokenizer)
+        one_trial_losses.append(results)
+    
+    # if (trial+1) % 10 == 0:
+    logger.info(one_trial_losses)
+    min_loss = 1e6; max_accuracy = 0
+    label = np.argmin(one_trial_losses)
+    accuracy = int(dp["options"][label] == dp['output'])
+    min_loss = min(min_loss, np.min(one_trial_losses))
+    max_accuracy = max(max_accuracy, accuracy)
 
-        one_trial_losses = []
-        for option_token in option_tokens:
-            input_ids, results = run_a_forward_pass(demonstrations +    input_tokens, option_token, tokenizer)
-            one_trial_losses.append(results)
-        
-        if (trial+1) % 10 == 0:
-            print(one_trial_losses)
 
-            min_loss = 1e6; max_accuracy = 0
-            for one_trial_losses in losses:
-                label = np.argmin(one_trial_losses)
-                accuracy = int(dp["options"][label] == dp['output'])
-                min_loss = min(min_loss, np.min(one_trial_losses))
-                max_accuracy = max(max_accuracy, accuracy)
-            if max_accuracy == 1:
-                break
 
-        losses.append(one_trial_losses)
-
-    print(min_loss, max_accuracy)
+    logger.info("min_loss: %f, max_accuracy: %f", min_loss, max_accuracy)
     accuracies.append(max_accuracy)
     if (dp_idx + 1) % 10 == 0:
-        print("Avg. accuracy: {}".format(np.mean(accuracies)))
+        logger.info("Avg. accuracy: {}".format(np.mean(accuracies)))
 
-print("Avg. accuracy: {}".format(np.mean(accuracies)))
+logger.info("Avg. accuracy: {}".format(np.mean(accuracies)))
 
 # # %%
 # losses = np.array(losses)
@@ -294,10 +299,10 @@ print("Avg. accuracy: {}".format(np.mean(accuracies)))
 
 #     assert len(losses) == 100 
 #     predictions = []
-#     print("len(data):", len(data))
+#     logger.info("len(data):", len(data))
 #     for idx, dp in enumerate(data):
-#         print(f"Processing input {idx + 1}/{len(data)}")
-#         print("dp[\"options\"]:", dp["options"])
+#         logger.info(f"Processing input {idx + 1}/{len(data)}")
+#         logger.info("dp[\"options\"]:", dp["options"])
 
 #         curr_label_losses = [
 #             np.mean([losses[trial_idx] for trial_idx in indices])
@@ -311,11 +316,11 @@ print("Avg. accuracy: {}".format(np.mean(accuracies)))
 #     return predictions
 
 # predictions = do_predict(prediction_data, losses=losses, verbose=True)
-# print("Final Predictions for test_data[0]:", predictions)
+# logger.info("Final Predictions for test_data[0]:", predictions)
 
-# print((losses < before_loss).sum())
-# print(min(losses))
-# print((before_loss-min(losses) )/before_loss)
+# logger.info((losses < before_loss).sum())
+# logger.info(min(losses))
+# logger.info((before_loss-min(losses) )/before_loss)
 
 # k = 2 Loss: 6.0350
 # k = 4 Loss: 4.6970
