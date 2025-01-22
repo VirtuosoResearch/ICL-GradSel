@@ -29,10 +29,10 @@ class args:
     log_file = None
 
     task = None
-    dataset = "superglue-cb"
-    k = 2
+    dataset = "poem_sentiment"
+    k = 3
     seed = "42"
-    device = 0
+    device = 1
 
     test_batch_size = 4
     global_step = None
@@ -238,12 +238,6 @@ for dp_idx in range(len(test_data)):
     metaicl_model.model.eval()
     metaicl_model.model.to(device)
 
-    # demonstrations = []
-    # for i, neighbor_dp in enumerate(top_k_neighbors):
-    #     tmp_str = "Input: " + neighbor_dp["input"] + " " + "Label: " + neighbor_dp["output"] + "\n"
-    #     demonstrations += tokenizer(tmp_str)["input_ids"]
-    # _, before_loss = run_a_forward_pass(demonstrations+input_tokens, output_tokens, tokenizer)
-    # logger.info("before_loss",before_loss)
 
     losses = []
     demonstrations = []
