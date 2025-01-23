@@ -156,10 +156,11 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, seed,
                                       "-supcon" if args.supcon else "",
                                       "-unlabeled" if args.unlabeled else "",
                                       "-ranens" if args.ranens else "",
+                                      "-forsel" if args.forsel else "",
                                       "-k={}".format(args.k) if args.use_demonstrations else "",
                                       "-s={}".format(seed) if args.use_demonstrations or args.use_random_english_words else "",
                                       "" if add_newlines else "-no-newlines",
-                                      "-m={}".format(args.m) if args.supcon or args.ranens else ""))
+                                      "-m={}".format(args.m) if args.supcon or args.ranens or args.forsel else ""))
 
     datapath = "./data/alldata.jsonl"
     if args.topk:
@@ -174,6 +175,8 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, seed,
         metaicl_data.tensorize_multidata(test_data, datapath, args.m, add_newlines=add_newlines)
     elif args.ranens:
         metaicl_data.tensorize_ranens(test_data, args.m, args.seed, add_newlines=add_newlines)
+    elif args.forsel:
+        metaicl_data.tensorize_forsel(test_data, args.m, args.seed, add_newlines=add_newlines)
 
     metaicl_data.print_tensorized_example()
     logger.info(cache_path)
@@ -263,6 +266,7 @@ if __name__=='__main__':
     parser.add_argument("--unlabeled", default=False, action="store_true")
     parser.add_argument("--multidata", default=False, action="store_true")
     parser.add_argument("--ranens", default=False, action="store_true")
+    parser.add_argument("--forsel", default=False, action="store_true")
     parser.add_argument("--m", type=int, default=4)
     parser.add_argument("--device", type=int, default=0)
     args = parser.parse_args()

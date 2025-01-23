@@ -14,6 +14,8 @@ import math
 import torch
 import random
 from itertools import combinations
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 
 from collections import defaultdict
 from functools import partial
@@ -674,9 +676,10 @@ class MetaICLData(object):
 
         all_loss_list = []
 
-        all_combinations = all_combinations[:len(all_combinations)//2]
+        cnt_samples = int(len(all_combinations)/2)
 
         for idx, combination in enumerate(all_combinations):
+            if idx >=cnt_samples: break
             selected_embeddings = [embeddings[i] for i in combination]
             selected_data = [test_data[i] for i in combination]
 
@@ -720,13 +723,16 @@ class MetaICLData(object):
             current_labels = [candidate_labels[i] for i in combination]
             lam=0.05
             simcon_loss = -simloss + lam*con_loss
+            # print("simloss : ",simloss, "con_loss : ",con_loss, "simcon_loss : ",simcon_loss)
             all_loss_list.append(simcon_loss)
 
-        X = np.zeros(len(all_combinations), len(top_k_indices))
-        y = np.zeros(len(top_k_indices))
+        # print(len(all_combinations), len(top_k_indices))
+        X = np.zeros((cnt_samples, len(top_k_indices)))
+        y = np.zeros(cnt_samples)
         model = LinearRegression()
 
-        for i, combination in enumerate(len(all_combinations)):
+        for i, combination in enumerate(all_combinations):
+            if i >= cnt_samples: break
             y[i] = all_loss_list[i]
             for j, item in enumerate(top_k_indices):
                 if item in combination:
@@ -737,8 +743,8 @@ class MetaICLData(object):
         theta = list(enumerate(theta))
         theta = sorted(theta, key=lambda x: x[1])
         indices = [x[0] for x in theta[:-m]]
-        print("--*--"*10)
-        print(theta[:-m])
+        # print("--*--"*10)
+        # print(theta[:-m])
         real_id = [top_k_indices[i] for i in indices]
 
         return [test_data[idx] for idx in real_id]
