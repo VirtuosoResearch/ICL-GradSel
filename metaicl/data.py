@@ -22,6 +22,7 @@ from multiprocessing import Pool
 from torch.utils.data import TensorDataset, DataLoader, RandomSampler, SequentialSampler
 from sklearn.metrics.pairwise import cosine_similarity
 from scipy.spatial.distance import cosine
+from sklearn.linear_model import LinearRegression
 
 class MetaICLData(object):
 
@@ -490,11 +491,12 @@ class MetaICLData(object):
                                       token_type_ids=torch.LongTensor(token_type_ids))
         self.metadata = metadata
 
-    def _random_ensemble(self, embeddings, top_k_indices, m, candidate_labels, test_data, similarities, temperature=0.1):
+    def _random_ensemble(self, embeddings, top_k_indices, m, candidate_labels, test_data, similarities, seed, temperature=0.1):
 
         assert m <= len(top_k_indices), "Error: m must less than k"
 
         all_combinations = list(combinations(top_k_indices, m))
+        random.seed(seed)
         random.shuffle(all_combinations)
 
         for idx in range(len(embeddings)):
@@ -551,8 +553,8 @@ class MetaICLData(object):
             # print("simloss : ",simloss, "con_loss : ",con_loss, "simcon_loss : ",simcon_loss)
             all_loss_list.append(simcon_loss)
 
-        point_score = [1001.0 for i in top_k_indices]
-        cnt_point = [0 for i in top_k_indices]
+        point_score = [1001.0 for i in range(len(top_k_indices))]
+        cnt_point = [0 for i in range(len(top_k_indices))]
         for i, combination in enumerate(all_combinations):
             if i>=len(all_combinations)/2: break
             # print(f"combination: {combination}")
@@ -575,7 +577,7 @@ class MetaICLData(object):
         return [test_data[x] for x in real_indices]
 
      
-    def tensorize_ranens(self, _test_data, m, options=None, add_newlines=True):
+    def tensorize_ranens(self, _test_data, m, seed, options=None, add_newlines=True):
         if options is not None:
             for i, dp in enumerate(_test_data):
                 assert "options" not in dp
@@ -627,14 +629,180 @@ class MetaICLData(object):
                     m=m, 
                     candidate_labels=test_labels, 
                     test_data=test_data,
-                    similarities = similarities
+                    similarities = similarities,
+                    seed=seed
                 )
-
-    # def _random_ensemble(self, embeddings, top_k_indices, m, candidate_labels, test_data, similarities, temperature=0.1):
-
 
                 demonstrations = []
                 for i, neighbor_dp in enumerate(ranens):
+                    input_, output_ = self._prepro_each_datapoint(
+                        neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
+                    demonstrations += input_ + output_
+
+            indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
+
+            metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
+
+            for inputs_, outputs_ in zip(inputs, outputs):
+                if self.use_demonstrations:
+                    inputs_ = demonstrations + inputs_
+                encoded = prepro_sentence_pair_single(
+                    inputs_, outputs_, self.max_length, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
+                    allow_truncation=self.use_demonstrations
+                )
+                input_ids.append(encoded[0])
+                attention_mask.append(encoded[1])
+                token_type_ids.append(encoded[2])
+
+        self.tensorized_inputs = dict(input_ids=torch.LongTensor(input_ids),
+                                      attention_mask=torch.LongTensor(attention_mask),
+                                      token_type_ids=torch.LongTensor(token_type_ids))
+        self.metadata = metadata
+
+
+    def _forward_selection(self, embeddings, top_k_indices, m, candidate_labels, test_data, similarities, seed, temperature=0.1):
+
+        assert m <= len(top_k_indices), "Error: m must less than k"
+
+        all_combinations = list(combinations(top_k_indices, m))
+        random.seed(seed)
+        random.shuffle(all_combinations)
+
+        for idx in range(len(embeddings)):
+            embeddings[idx] = torch.tensor(embeddings[idx], dtype=torch.float32)
+            embeddings[idx] = embeddings[idx] / torch.norm(embeddings[idx])
+
+        all_loss_list = []
+
+        all_combinations = all_combinations[:len(all_combinations)//2]
+
+        for idx, combination in enumerate(all_combinations):
+            selected_embeddings = [embeddings[i] for i in combination]
+            selected_data = [test_data[i] for i in combination]
+
+            # compute simloss
+            simloss = 0.0
+            for idx in combination:
+                simloss+=similarities[idx]
+            simloss /= m
+            
+            # compute supcon loss
+            con_loss, pos_loss, all_loss = 0.0, 0.0, 0.0
+            for idx1 in combination:
+                cnt_pos = 0
+                pos_loss = 0.0
+                idx1_embedding, idx1_label = embeddings[idx1], candidate_labels[idx1]
+                logits = []
+                for idx2 in combination:
+                    if idx1 == idx2:
+                        continue
+                    idx2_embedding, idx2_label = embeddings[idx2], candidate_labels[idx2]
+                    similarity = torch.matmul(idx1_embedding, idx2_embedding) / temperature
+                    logits.append(similarity)
+                    if idx1_label == idx2_label:
+                        pos_loss += torch.exp(similarity)
+                        cnt_pos += 1
+                
+                logits = torch.tensor(logits)
+                logits_max = torch.max(logits)
+                logits = logits - logits_max.detach()
+                exp_logits = torch.exp(logits)
+                exp_logits_sum = exp_logits.sum()
+                
+                if cnt_pos > 0:
+                    pos_prob = pos_loss / exp_logits_sum 
+                    idx_loss = pos_prob / cnt_pos 
+                else:
+                    idx_loss = 1e-6
+                idx_loss = torch.tensor(idx_loss, dtype=torch.float32)
+                con_loss += -1.0 * torch.log(idx_loss)
+
+            current_labels = [candidate_labels[i] for i in combination]
+            lam=0.05
+            simcon_loss = -simloss + lam*con_loss
+            all_loss_list.append(simcon_loss)
+
+        X = np.zeros(len(all_combinations), len(top_k_indices))
+        y = np.zeros(len(top_k_indices))
+        model = LinearRegression()
+
+        for i, combination in enumerate(len(all_combinations)):
+            y[i] = all_loss_list[i]
+            for j, item in enumerate(top_k_indices):
+                if item in combination:
+                    X[i, j] = 1
+        
+        model.fit(X,y)
+        theta = model.coef_
+        theta = list(enumerate(theta))
+        theta = sorted(theta, key=lambda x: x[1])
+        indices = [x[0] for x in theta[:-m]]
+        print("--*--"*10)
+        print(theta[:-m])
+        real_id = [top_k_indices[i] for i in indices]
+
+        return [test_data[idx] for idx in real_id]
+        
+
+     
+    def tensorize_forsel(self, _test_data, m, seed, options=None, add_newlines=True):
+        if options is not None:
+            for i, dp in enumerate(_test_data):
+                assert "options" not in dp
+                assert type(dp) == str
+                _test_data[i] = {"input": dp, "options": options}
+
+        train_data, test_data, test_labels = [], [], []
+
+
+        for dp in _test_data:
+            assert type(dp) == dict, ("Each example should be a dictionary", dp)
+            assert "input" in dp and "options" in dp and type(dp["options"]) == list, \
+                ("Test example should contain input and options in a list format", dp)
+            if "output" not in dp:
+                dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
+            test_data.append(dp.copy())
+
+
+        task = _test_data[0]["task"]
+        features_path = f"./features/{task}_features.json"
+        with open(features_path, "r") as file:
+            test_features = json.load(file)
+        
+
+        if self.use_demonstrations:
+            test_texts = [dp["input"] + " " + dp["output"] for dp in test_data]
+            test_labels = [dp["output"] for dp in test_data]
+
+        input_ids, attention_mask, token_type_ids = [], [], []
+        metadata = []
+
+        for dp_idx, dp in enumerate(test_data):
+            inputs, outputs, answer = self._prepro_each_datapoint(
+                dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
+
+            if self.use_demonstrations:
+                test_text = dp["input"]
+                dp_feature = test_features[dp_idx]            
+
+                top_k_neighbors, top_k_indices, similarities = self._select_top_k_neighbors(
+                    dp_feature, test_features, test_data, self.k, dp_idx
+                )
+                
+                # print("similarities : ",similarities)
+
+                forsel = self._forward_selection(
+                    embeddings=test_features,
+                    top_k_indices=top_k_indices,
+                    m=m, 
+                    candidate_labels=test_labels, 
+                    test_data=test_data,
+                    similarities = similarities,
+                    seed=seed
+                )
+
+                demonstrations = []
+                for i, neighbor_dp in enumerate(forsel):
                     input_, output_ = self._prepro_each_datapoint(
                         neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
                     demonstrations += input_ + output_
