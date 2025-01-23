@@ -173,7 +173,7 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, seed,
     elif args.multidata:
         metaicl_data.tensorize_multidata(test_data, datapath, args.m, add_newlines=add_newlines)
     elif args.ranens:
-        metaicl_data.tensorize_ranens(test_data, args.m, add_newlines=add_newlines)
+        metaicl_data.tensorize_ranens(test_data, args.m, args.seed, add_newlines=add_newlines)
 
     metaicl_data.print_tensorized_example()
     logger.info(cache_path)
@@ -195,6 +195,9 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, seed,
             metaicl_model.resize(tokenizer)
 
         losses = metaicl_model.do_inference(metaicl_data, args.test_batch_size)
+        
+        # print("losses : ",losses)
+
         with open(cache_path, "wb") as f:
             pkl.dump(losses, f)
 
