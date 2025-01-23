@@ -29,10 +29,10 @@ class args:
     log_file = None
 
     task = None
-    dataset = "superglue-cb"
+    dataset = "poem_sentiment"
     k = 2
     seed = "42"
-    device = 1
+    device = 2
 
     test_batch_size = 4
     global_step = None
@@ -186,6 +186,14 @@ def select_top_k_neighbors(test_sample_embedding, test_embeddings, test_data, k,
     top_k_indices = np.argsort(similarities)[-k:][::-1]
     return [test_data[i] for i in top_k_indices], top_k_indices , similarities
 
+def _select_random_k_neighbors(test_sample_embedding, test_embeddings, test_data, k, dp_idx):
+        
+        length = len(test_data)
+        candidates = [i for i in range(length) if i!= dp_idx]
+        random_indices = random.sample(candidates, k)
+
+        return [test_data[i] for i in random_indices]
+
 def run_a_forward_pass(input_tokens, output_tokens, tokenizer):
     encoded = prepro_sentence_pair_single(
                 input_tokens, output_tokens, max_length=1024, bos_token_id=tokenizer.bos_token_id, eos_token_id=tokenizer.eos_token_id,
@@ -223,7 +231,7 @@ for dp_idx in range(len(test_data)):
 
     dp_feature = test_features[dp_idx]
 
-    top_k_neighbors, _, __ = select_top_k_neighbors(
+    random_k_neighbors = _select_random_k_neighbors(
         dp_feature, test_features, test_data, args.k, dp_idx
     )
 
@@ -250,7 +258,7 @@ for dp_idx in range(len(test_data)):
             demonstrations += tokenizer(tmp_str)["input_ids"]
         
         # add labled examples
-        for i, neighbor_dp in enumerate(top_k_neighbors):
+        for i, neighbor_dp in enumerate(random_k_neighbors):
             tmp_str =  "Input: " + neighbor_dp["input"] + " " + "Label: " + neighbor_dp["output"] + "\n"
             demonstrations += tokenizer(tmp_str)["input_ids"]
 
