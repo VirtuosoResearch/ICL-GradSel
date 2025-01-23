@@ -29,10 +29,10 @@ class args:
     log_file = None
 
     task = None
-    dataset = "poem_sentiment"
+    dataset = "glue-rte"
     k = 3
     seed = "42"
-    device = 0
+    device = 1
 
     test_batch_size = 4
     global_step = None
@@ -138,7 +138,7 @@ if args.do_zeroshot:
     if args.is_null:
         split_name += "-null"
     cache_path = os.path.join(args.out_dir,
-                                "{}-{}-{}{}{}{}{}{}{}{}{}.pkl".format(
+                                "{}-{}-{}{}{}{}{}{}{}{}{}_motivation.pkl".format(
                                     task,
                                     split_name,
                                     metaicl_data.method,
@@ -219,9 +219,29 @@ options = [dp["options"].index(dp["output"])]
 # %%
 accuracies = []
 args.k = 3 # select three labeled
-unlabeled_k = 3 
+otherdata_k = 3 
 num_trials = 1
 
+all_tasks = ["climate_fever", "glue-mrpc", "glue-rte", "glue-wnli", "poem_sentiment", "superglue-cb"]
+other_data = []
+other_features = []
+
+idx = 0
+for task in all_tasks:
+    if task == args.dataset: continue
+    other_data.append(load_data(task, args.split, args.k, seed=seed, config_split=config_split,
+            datasets=None if task is None else task.split(","), is_null=args.is_null))
+    feature_path = f"./features/{task}_features.json"
+    with open(feature_path, "r") as file:
+        other_features.append(json.load(file))
+    logger.info("len(other_data) : %d, len(other_features) : %d" ,len(other_data[idx]), len(other_features[idx]))
+    idx+=1
+# print(len(other_data))
+other_data=[item for sublist in other_data for item in sublist]
+other_features = [item for sublist in other_features for item in sublist]
+
+logger.info("sum len(other_data) : %d, sum len(other_features) : %d" , len(other_data), len(other_features))
+# %%
 for dp_idx in range(len(test_data)):
     dp = test_data[dp_idx]
     input_tokens = tokenizer("Input: " + dp["input"] + " " + "Label: ")["input_ids"]
@@ -245,11 +265,13 @@ for dp_idx in range(len(test_data)):
     # candidates = [i for i in range(len(test_data)) if i!=dp_idx]
     # random.seed(trial)
     topk_data, topk_indices, __ = select_top_k_neighbors(
-        dp_feature, test_features, test_data, unlabeled_k, dp_idx
+        dp_feature, other_features, other_data, otherdata_k, dp_idx
     )
     for i in topk_indices:
-        unlabel_dp = test_data[i]
-        tmp_str = "Input: " + unlabel_dp["input"] + " " + "Label: " + "\n"
+        # print("i : ",i)
+        otherdata_dp = other_data[i]
+        # print("otherdata_dp : ",otherdata_dp)
+        tmp_str = "Input: " + otherdata_dp["input"] + " " + "Label: " + otherdata_dp["output"] + "\n"
         demonstrations += tokenizer(tmp_str)["input_ids"]
     
     # add labled examples
@@ -325,3 +347,5 @@ logger.info("Avg. accuracy: {}".format(np.mean(accuracies)))
 # 1: 56 0.10330490071564696
 # 2: 1 0.002612681340769363
 # 3: 48 0.08768596101212324
+
+# %%
