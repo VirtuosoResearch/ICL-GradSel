@@ -147,7 +147,7 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, seed,
         if args.is_null:
             split_name += "-null"
         cache_path = os.path.join(args.out_dir,
-                                  "{}-{}-{}{}{}{}{}{}{}{}{}{}.pkl".format(
+                                  "{}-{}-{}{}{}{}{}{}{}{}{}{}{}.pkl".format(
                                       task,
                                       split_name,
                                       metaicl_data.method,
