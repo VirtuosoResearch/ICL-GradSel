@@ -84,7 +84,7 @@ def main():
             for entry in data:
                 f.write(json.dumps(entry) + "\n")
 
-    save_jsonl(train_json, os.path.join(path, "medical_questions_pairs_train.jsonl"))
+    save_jsonl(train_json, os.path.join(path, "medical_questions_pairs_test.jsonl"))
     # save_jsonl(dev_json, os.path.join(path, "medical_questions_pairs_dev.jsonl"))
     # save_jsonl(test_json, os.path.join(path, "medical_questions_pairs_test.jsonl"))
 

@@ -662,7 +662,7 @@ class MetaICLData(object):
         self.metadata = metadata
 
 
-    def _forward_selection(self, embeddings, top_k_indices, m, candidate_labels, test_data, similarities, seed, temperature=0.1):
+    def _theta_ensemble(self, embeddings, top_k_indices, m, candidate_labels, test_data, similarities, seed, temperature=0.1):
 
         assert m <= len(top_k_indices), "Error: m must less than k"
 
@@ -740,15 +740,111 @@ class MetaICLData(object):
         
         model.fit(X,y)
         theta = model.coef_
-        theta = list(enumerate(theta))
-        theta = sorted(theta, key=lambda x: x[1])
-        indices = [x[0] for x in theta[:-m]]
-        # print("--*--"*10)
-        # print(theta[:-m])
-        real_id = [top_k_indices[i] for i in indices]
+        # theta = list(enumerate(theta))
+        # theta = sorted(theta, key=lambda x: x[1])
+        # indices = [x[0] for x in theta[:-m]]
+        # # print("--*--"*10)
+        # # print(theta[:-m])
+        # real_id = [top_k_indices[i] for i in indices]
+
+        selected_indices = set()
+        remaining_indices = set(range(len(top_k_indices)))
+
+        while len(selected_indices) < m:
+            best_candidate = None
+            best_loss = float('inf')
+
+            for idx in remaining_indices:
+                if idx in selected_indices:
+                    continue
+
+                temp_selected = selected_indices.union({idx})
+                temp_loss = 0.0
+
+                for i in temp_selected:
+                    temp_loss += theta[i]
+
+                if temp_loss < best_loss:
+                    best_loss = temp_loss
+                    best_candidate = idx
+
+            selected_indices.add(best_candidate)
+            remaining_indices.remove(best_candidate)
+
+        real_id = [top_k_indices[idx] for idx in selected_indices]
+
 
         return [test_data[idx] for idx in real_id]
         
+    def _forward_selection(self, embeddings, top_k_indices, m, candidate_labels, test_data, similarities, seed, temperature=0.1):
+        assert m <= len(top_k_indices), "Error: m must less than k"
+
+        for idx in range(len(embeddings)):
+            embeddings[idx] = torch.tensor(embeddings[idx], dtype=torch.float32)
+            embeddings[idx] = embeddings[idx] / torch.norm(embeddings[idx])
+
+        # Initialize selected and remaining indices
+        top_indice = np.argsort(similarities)[-1:][::-1]
+        selected_indices = set(top_indice)
+        top_k_indices = [item for item in top_k_indices if item != top_indice]
+        remaining_indices = set(top_k_indices)
+
+        # Greedy selection based on actual loss
+        while len(selected_indices) < m:
+            best_candidate = None
+            best_loss = float('inf')
+
+            for candidate in remaining_indices:
+                temp_selected = list(selected_indices.union({candidate}))
+
+                simloss = sum(similarities[idx] for idx in temp_selected) / len(temp_selected)
+
+                con_loss = 0.0
+                for idx1 in temp_selected:
+                    cnt_pos = 0
+                    pos_loss = 0.0
+                    idx1_embedding, idx1_label = embeddings[idx1], candidate_labels[idx1]
+                    logits = []
+                    for idx2 in temp_selected:
+                        if idx1 == idx2:
+                            continue
+                        idx2_embedding, idx2_label = embeddings[idx2], candidate_labels[idx2]
+                        similarity = torch.matmul(idx1_embedding, idx2_embedding) / temperature
+                        logits.append(similarity)
+                        if idx1_label == idx2_label:
+                            pos_loss += torch.exp(similarity)
+                            cnt_pos += 1
+
+                    logits = torch.tensor(logits)
+                    logits_max = torch.max(logits)
+                    logits = logits - logits_max.detach()
+                    exp_logits = torch.exp(logits)
+                    exp_logits_sum = exp_logits.sum()
+
+                    if cnt_pos > 0:
+                        pos_prob = pos_loss / exp_logits_sum
+                        idx_loss = pos_prob / cnt_pos
+                    else:
+                        idx_loss = 1e-6
+                    idx_loss = torch.tensor(idx_loss, dtype=torch.float32)
+                    con_loss += -1.0 * torch.log(idx_loss)
+
+                lam = 0.05
+                total_loss = -simloss + lam * con_loss
+
+                # print("--*--"*10)
+                # print(candidate, total_loss, best_loss)
+
+                if total_loss < best_loss:
+                    best_loss = total_loss
+                    best_candidate = candidate
+
+            selected_indices.add(best_candidate)
+            remaining_indices.remove(best_candidate)
+
+        real_id = [idx for idx in selected_indices]
+        return [test_data[idx] for idx in real_id]
+
 
      
     def tensorize_forsel(self, _test_data, m, seed, options=None, add_newlines=True):
