@@ -29,7 +29,7 @@ Pay attention that for some dataset, we only generate the training dataset, so w
 
 ### 2. implement the experiments
 
-**Note that a new enviroment need to be built.**
+**Note that a new environment need to be built.**
 
 ```bash
 conda create -n metaicl python=3.8
@@ -58,6 +58,12 @@ python test.py --dataset {dataset} --gpt2 gpt2-large --method direct --out_dir o
 # unlabeled
 python test.py --dataset {dataset} --gpt2 gpt2-large --method direct --out_dir out/gpt2-large --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 100 --k {number} --unlabeled
 
-# supcon (k must larger than m)
+# Supervised Contrastive Loss (k must larger than m)
 python test.py --dataset {dataset} --gpt2 gpt2-large --method direct --out_dir out/gpt2-large --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 100 --k {number} --m {number} --supcon
+
+# Random Ensemble (k must larger than m)
+python test.py --dataset {dataset} --gpt2 gpt2-large --method direct --out_dir out/gpt2-large --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 100 --k {number} --m {number} --ranens
+
+# Forward Selection (k must larger than m)
+python test.py --dataset {dataset} --gpt2 gpt2-large --method direct --out_dir out/gpt2-large --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 100 --k {number} --m {number} --forsel
 ```

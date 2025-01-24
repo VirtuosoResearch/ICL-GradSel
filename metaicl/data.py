@@ -783,13 +783,11 @@ class MetaICLData(object):
             embeddings[idx] = torch.tensor(embeddings[idx], dtype=torch.float32)
             embeddings[idx] = embeddings[idx] / torch.norm(embeddings[idx])
 
-        # Initialize selected and remaining indices
         top_indice = np.argsort(similarities)[-1:][::-1]
         selected_indices = set(top_indice)
         top_k_indices = [item for item in top_k_indices if item != top_indice]
         remaining_indices = set(top_k_indices)
 
-        # Greedy selection based on actual loss
         while len(selected_indices) < m:
             best_candidate = None
             best_loss = float('inf')
