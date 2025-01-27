@@ -17,6 +17,10 @@ from itertools import combinations
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
+import nltk
+from nltk.corpus import wordnet
+import random
+
 from collections import defaultdict
 from functools import partial
 from multiprocessing import Pool
@@ -927,6 +931,18 @@ class MetaICLData(object):
                                       token_type_ids=torch.LongTensor(token_type_ids))
         self.metadata = metadata
 
+    def synonym_augmentation(sentence, num_replacements=1):
+        words = sentence.split()
+        augmented_sentence = words.copy()
+        for _ in range(num_replacements):
+            word_to_replace = random.choice(words)
+            synonyms = wordnet.synsets(word_to_replace)
+            if synonyms:
+                synonym_words = [lemma.name() for syn in synonyms for lemma in syn.lemmas()]
+                if synonym_words:
+                    synonym = random.choice(synonym_words)
+                    augmented_sentence[words.index(word_to_replace)] = synonym.replace("_", " ")
+        return " ".join(augmented_sentence)
 
     def _select_random_k_neighbors(self, test_sample_embedding, test_embeddings, test_data, k, dp_idx):
         
