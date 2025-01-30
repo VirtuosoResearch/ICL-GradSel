@@ -20,7 +20,7 @@ class args:
     dataset = "glue-rte"
     k = 3
     unlabeled_k = 2
-    seed = "42"
+    seed = 42
     device = 0
     test_batch_size = 4
     global_step = None
@@ -31,7 +31,6 @@ class args:
     method = "direct"
     gpt2 = "gpt2-large"
     m = 4
-
 
 logger = logging.getLogger(__name__)
 device = torch.device(f"cuda:{args.device}" if torch.cuda.is_available() else "cpu")
@@ -54,13 +53,8 @@ if args.use_demonstrations:
 metaicl_data = MetaICLData(logger, tokenizer, args.method, args.use_demonstrations, args.k,
                             max_length, max_length_per_example)
 
-results = []
-errors = []
-seeds = args.seed.split(",")
 config_split = "unseen_domain_test" if args.unseen_domain_only else "test"
-
-seed = seeds[0]
-test_data = load_data(args.task, args.split, args.k, seed=seed, config_split=config_split,
+test_data = load_data(args.task, args.split, args.k, seed=args.seed, config_split=config_split,
             datasets=None if args.dataset is None else args.dataset.split(","), is_null=args.is_null)
 task = args.dataset
 
