@@ -9,7 +9,7 @@ from metaicl.data import prepro_sentence_pair_single
 from utils.data import load_data
 
 class Forward():
-    def __init__(self, k=3, unlabeled_k=2, m=4, dataset="glue-rte"):
+    def __init__(self, k=3, dataset="glue-rte"):
         
         self.do_zeroshot = True
         self.use_demonstrations = True
@@ -18,7 +18,6 @@ class Forward():
         self.log_file = None
         self.dataset = dataset
         self.k = k
-        self.unlabeled_k = unlabeled_k
         self.seed = 42
         self.device = 0
         self.test_batch_size = 4
@@ -29,7 +28,6 @@ class Forward():
         self.is_null = False
         self.method = "direct"
         self.gpt2 = "gpt2-large"
-        self.m = m
 
     def forward(self, idx):
         logger = logging.getLogger(__name__)
@@ -100,7 +98,4 @@ class Forward():
 
         label_id = np.argmin(one_trial_losses)
         label = dp["options"][label_id]
-        print(label)
-
-fwd = Forward()
-fwd.forward(1)
+        return label_id, label
