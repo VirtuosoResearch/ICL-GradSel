@@ -864,7 +864,7 @@ class MetaICLData(object):
         return [test_data[idx] for idx in real_id]
 
 
-    def tensorize_forsel(self, _test_data, m, seed, options=None, add_newlines=True):
+    def tensorize_forsel(self, _test_data, _val_data, m, seed, options=None, add_newlines=True):
         if options is not None:
             for i, dp in enumerate(_test_data):
                 assert "options" not in dp
