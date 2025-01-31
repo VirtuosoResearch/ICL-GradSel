@@ -17,9 +17,16 @@ from itertools import combinations
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
+# import sys
+# import os
+# sys.path.append(os.path.abspath(os.path.dirname(__file__) + "/.."))
+# from forward_path import Forward
+
 import nltk
 from nltk.corpus import wordnet
 import random
+
+# from data_augment import DataAugment
 
 from collections import defaultdict
 from functools import partial
@@ -229,20 +236,23 @@ class MetaICLData(object):
                 continue
             similarity = 1 - cosine(test_sample_embedding, dp)
             similarities.append(similarity)
-
-        # print("k : ",k)
-        # print("similarities : ",similarities)
         top_k_indices = np.argsort(similarities)[-k:][::-1]
         return [test_data[i] for i in top_k_indices], top_k_indices , similarities
     
-    def tensorize_topk(self, _test_data, options=None, add_newlines=True):
+    def tensorize_topk(self, _test_data, _val_data, options=None, add_newlines=True):
         if options is not None:
             for i, dp in enumerate(_test_data):
                 assert "options" not in dp
                 assert type(dp) == str
                 _test_data[i] = {"input": dp, "options": options}
+            for i, dp in enumerate(_val_data):
+                assert "options" not in dp
+                assert type(dp) == str
+                _val_data[i] = {"input": dp, "options": options}
         print("len(_test_data) : ",len(_test_data))
-        train_data, test_data =  [], []
+        print("len(_val_data) : ", len(_val_data))
+
+        val_data, test_data =  [], []
 
         for dp in _test_data:
             assert type(dp) == dict, ("Each example should be a dictionary", dp)
@@ -251,30 +261,31 @@ class MetaICLData(object):
             if "output" not in dp:
                 dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
             test_data.append(dp.copy())
+        for dp in _val_data:
+            assert type(dp) == dict, ("Each example should be a dictionary", dp)
+            assert "input" in dp and "options" in dp and type(dp["options"]) == list, \
+                ("Test example should contain input and options in a list format", dp)
+            if "output" not in dp:
+                dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
+            val_data.append(dp.copy())
         
         task = _test_data[0]["task"]
-        features_path = f"./features/{task}_features.json"
-        with open(features_path, "r") as file:
+        test_features_path = f"./features/{task}_test_features.json"
+        with open(test_features_path, "r") as file:
             test_features = json.load(file)
-        
-        # print("--"*20)
-        # print(len(test_features))
-        # print("--"*20)
-
-        if self.use_demonstrations:
-            test_texts = [dp["input"] + " " + dp["output"] for dp in test_data]
+        val_features_path = f"./features/{task}_val_features.json"
+        with open(val_features_path, "r") as file:
+            val_features = json.load(file)
 
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
 
-        for dp_idx, dp in enumerate(test_data):
+        for dp_idx, dp in enumerate(val_data):
             inputs, outputs, answer = self._prepro_each_datapoint(
                 dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
 
             if self.use_demonstrations:
-                # if dp_idx>=len(test_features):
-                #     print(f"len(test_data): {len(test_data)} dp_idx: {dp_idx} len(test_features): {len(test_features)}")
-                dp_feature = test_features[dp_idx]            
+                dp_feature = val_features[dp_idx]            
 
                 top_k_neighbors, _, __ = self._select_top_k_neighbors(
                     dp_feature, test_features, test_data, self.k, dp_idx
@@ -395,15 +406,20 @@ class MetaICLData(object):
             
         return best_combination_data, best_labels
 
-    def tensorize_supcon(self, _test_data, m, options=None, add_newlines=True):
+    def tensorize_supcon(self, _test_data, _val_data, m, options=None, add_newlines=True):
         if options is not None:
             for i, dp in enumerate(_test_data):
                 assert "options" not in dp
                 assert type(dp) == str
                 _test_data[i] = {"input": dp, "options": options}
+            for i, dp in enumerate(_val_data):
+                assert "options" not in dp
+                assert type(dp) == str
+                _val_data[i] = {"input": dp, "options": options}
+        print("len(_test_data) : ",len(_test_data))
+        print("len(_val_data) : ", len(_val_data))
 
-        train_data, test_data, test_labels = [], [], []
-
+        val_data, test_data =  [], []
 
         for dp in _test_data:
             assert type(dp) == dict, ("Each example should be a dictionary", dp)
@@ -412,13 +428,22 @@ class MetaICLData(object):
             if "output" not in dp:
                 dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
             test_data.append(dp.copy())
-
-
-        task = _test_data[0]["task"]
-        features_path = f"./features/{task}_features.json"
-        with open(features_path, "r") as file:
-            test_features = json.load(file)
+        for dp in _val_data:
+            assert type(dp) == dict, ("Each example should be a dictionary", dp)
+            assert "input" in dp and "options" in dp and type(dp["options"]) == list, \
+                ("Test example should contain input and options in a list format", dp)
+            if "output" not in dp:
+                dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
+            val_data.append(dp.copy())
         
+        task = _test_data[0]["task"]
+        test_features_path = f"./features/{task}_test_features.json"
+        with open(test_features_path, "r") as file:
+            test_features = json.load(file)
+        val_features_path = f"./features/{task}_val_features.json"
+        with open(val_features_path, "r") as file:
+            val_features = json.load(file)
+
 
         if self.use_demonstrations:
             test_texts = [dp["input"] + " " + dp["output"] for dp in test_data]
@@ -427,19 +452,17 @@ class MetaICLData(object):
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
 
-        for dp_idx, dp in enumerate(test_data):
+        for dp_idx, dp in enumerate(val_data):
             inputs, outputs, answer = self._prepro_each_datapoint(
                 dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
 
             if self.use_demonstrations:
                 test_text = dp["input"]
-                dp_feature = test_features[dp_idx]            
+                dp_feature = val_features[dp_idx]            
 
                 top_k_neighbors, top_k_indices, similarities = self._select_top_k_neighbors(
                     dp_feature, test_features, test_data, self.k, dp_idx
                 )
-                
-                # print("similarities : ",similarities)
 
                 greedy, best_labels = self.greedy_supcon(
                     embeddings=test_features,
@@ -450,27 +473,6 @@ class MetaICLData(object):
                     similarities = similarities
                 )
 
-                # file_path = f"./labels/{task}_{self.k}_{m}.json"
-
-                # if os.path.exists(file_path):
-                #     with open(file_path, "r") as file:
-                #         try:
-                #             existing_data = json.load(file) 
-                #         except json.JSONDecodeError:
-                #             existing_data = [] 
-                # else:
-                #     existing_data = []
-                # item = {idx : val for idx,val in enumerate(best_labels)}
-                # existing_data.append(item)
-
-                # with open(file_path, "w") as file:
-                #     json.dump(existing_data, file, indent=4)
-
-                # file_path = 
-                # with open (f"./labels/{task}_{self.k}_{m}.json","a") as file:
-                #     file.write("\n".join(map(str, best_labels)) + "\n")
-                # print("-----------Greedy------------")
-                # print(greedy)
                 demonstrations = []
                 for i, neighbor_dp in enumerate(greedy):
                     input_, output_ = self._prepro_each_datapoint(
@@ -583,15 +585,20 @@ class MetaICLData(object):
         return [test_data[x] for x in real_indices]
 
      
-    def tensorize_ranens(self, _test_data, m, seed, options=None, add_newlines=True):
+    def tensorize_ranens(self, _test_data, _val_data, m, seed, options=None, add_newlines=True):
         if options is not None:
             for i, dp in enumerate(_test_data):
                 assert "options" not in dp
                 assert type(dp) == str
                 _test_data[i] = {"input": dp, "options": options}
+            for i, dp in enumerate(_val_data):
+                assert "options" not in dp
+                assert type(dp) == str
+                _val_data[i] = {"input": dp, "options": options}
+        print("len(_test_data) : ",len(_test_data))
+        print("len(_val_data) : ", len(_val_data))
 
-        train_data, test_data, test_labels = [], [], []
-
+        val_data, test_data =  [], []
 
         for dp in _test_data:
             assert type(dp) == dict, ("Each example should be a dictionary", dp)
@@ -600,12 +607,21 @@ class MetaICLData(object):
             if "output" not in dp:
                 dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
             test_data.append(dp.copy())
-
-
+        for dp in _val_data:
+            assert type(dp) == dict, ("Each example should be a dictionary", dp)
+            assert "input" in dp and "options" in dp and type(dp["options"]) == list, \
+                ("Test example should contain input and options in a list format", dp)
+            if "output" not in dp:
+                dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
+            val_data.append(dp.copy())
+        
         task = _test_data[0]["task"]
-        features_path = f"./features/{task}_features.json"
-        with open(features_path, "r") as file:
+        test_features_path = f"./features/{task}_test_features.json"
+        with open(test_features_path, "r") as file:
             test_features = json.load(file)
+        val_features_path = f"./features/{task}_val_features.json"
+        with open(val_features_path, "r") as file:
+            val_features = json.load(file)
         
 
         if self.use_demonstrations:
@@ -615,13 +631,13 @@ class MetaICLData(object):
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
 
-        for dp_idx, dp in enumerate(test_data):
+        for dp_idx, dp in enumerate(val_data):
             inputs, outputs, answer = self._prepro_each_datapoint(
                 dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
 
             if self.use_demonstrations:
                 test_text = dp["input"]
-                dp_feature = test_features[dp_idx]            
+                dp_feature = val_features[dp_idx]            
 
                 top_k_neighbors, top_k_indices, similarities = self._select_top_k_neighbors(
                     dp_feature, test_features, test_data, self.k, dp_idx
@@ -848,16 +864,20 @@ class MetaICLData(object):
         return [test_data[idx] for idx in real_id]
 
 
-     
     def tensorize_forsel(self, _test_data, m, seed, options=None, add_newlines=True):
         if options is not None:
             for i, dp in enumerate(_test_data):
                 assert "options" not in dp
                 assert type(dp) == str
                 _test_data[i] = {"input": dp, "options": options}
+            for i, dp in enumerate(_val_data):
+                assert "options" not in dp
+                assert type(dp) == str
+                _val_data[i] = {"input": dp, "options": options}
+        print("len(_test_data) : ",len(_test_data))
+        print("len(_val_data) : ", len(_val_data))
 
-        train_data, test_data, test_labels = [], [], []
-
+        val_data, test_data =  [], []
 
         for dp in _test_data:
             assert type(dp) == dict, ("Each example should be a dictionary", dp)
@@ -866,13 +886,21 @@ class MetaICLData(object):
             if "output" not in dp:
                 dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
             test_data.append(dp.copy())
-
-
-        task = _test_data[0]["task"]
-        features_path = f"./features/{task}_features.json"
-        with open(features_path, "r") as file:
-            test_features = json.load(file)
+        for dp in _val_data:
+            assert type(dp) == dict, ("Each example should be a dictionary", dp)
+            assert "input" in dp and "options" in dp and type(dp["options"]) == list, \
+                ("Test example should contain input and options in a list format", dp)
+            if "output" not in dp:
+                dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
+            val_data.append(dp.copy())
         
+        task = _test_data[0]["task"]
+        test_features_path = f"./features/{task}_test_features.json"
+        with open(test_features_path, "r") as file:
+            test_features = json.load(file)
+        val_features_path = f"./features/{task}_val_features.json"
+        with open(val_features_path, "r") as file:
+            val_features = json.load(file)
 
         if self.use_demonstrations:
             test_texts = [dp["input"] + " " + dp["output"] for dp in test_data]
@@ -881,13 +909,13 @@ class MetaICLData(object):
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
 
-        for dp_idx, dp in enumerate(test_data):
+        for dp_idx, dp in enumerate(val_data):
             inputs, outputs, answer = self._prepro_each_datapoint(
                 dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
 
             if self.use_demonstrations:
                 test_text = dp["input"]
-                dp_feature = test_features[dp_idx]            
+                dp_feature = val_features[dp_idx]            
 
                 top_k_neighbors, top_k_indices, similarities = self._select_top_k_neighbors(
                     dp_feature, test_features, test_data, self.k, dp_idx
@@ -1018,8 +1046,6 @@ class MetaICLData(object):
             metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
 
             for inputs_, outputs_ in zip(inputs, outputs):
-                # print("inputs_ : ",inputs_)
-                # print("outputs_ : ",outputs_)
                 if self.use_demonstrations:
                     inputs_ = demonstrations + inputs_
                 encoded = prepro_sentence_pair_single(
@@ -1035,26 +1061,11 @@ class MetaICLData(object):
                                       token_type_ids=torch.LongTensor(token_type_ids))
         self.metadata = metadata
 
-    # def _select_unlabeled(self, test_data, k, dp_idx):
-        
-    #     length = len(test_data)
-    #     candidates = [i for i in range(length) if i!= dp_idx]
-    #     random_indices = random.sample(candidates, k)
+    def tensorize_unlabeled(self, _test_data, m, options=None, add_newlines=True):
 
-    #     return [test_data[i] for i in random_indices]
-    
-
-    def tensorize_unlabeled(self, _test_data, options=None, add_newlines=True):
-
-
-        print(("-"*20))
-        print(f"len(_test_data): {len(_test_data)}")
         train_data, test_data = [], []
 
         for dp in _test_data:
-            assert type(dp) == dict, ("Each example should be a dictionary", dp)
-            assert "input" in dp and "options" in dp and type(dp["options"]) == list, \
-                ("Test example should contain input and options in a list format", dp)
             if "output" not in dp:
                 dp["output"] = dp["options"][0]  
             test_data.append(dp.copy())
@@ -1094,13 +1105,17 @@ class MetaICLData(object):
                     test_embedding, test_embeddings_pad, test_data, self.k, dp_idx
                 )
                 demonstrations = []
+
+                # for i, neighbor_dp in enumerate(top_k_neighbors):
+                #     neighbor_dp["input"] = 
+                
                 for i, neighbor_dp in enumerate(top_k_neighbors):
                     input_, output_ = self._prepro_each_datapoint(
                         neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
-                    if i<= self.k//2:
-                        demonstrations += input_ + output_
-                    else:
+                    if i<= m:
                         demonstrations += input_
+                    else:
+                        demonstrations += input_ + output_
 
             indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
 
@@ -1305,10 +1320,6 @@ def prepro_sentence_pair_single(ids1, ids2, max_length,
                                 bos_token_id, eos_token_id,
                                 allow_truncation=False):
 
-    #if bos_token_id is not None:
-    #    ids1 = [bos_token_id] + ids1
-    #if eos_token_id is not None:
-    #    ids2 = ids2 + [eos_token_id]
     if allow_truncation and len(ids1)+len(ids2) > max_length:
         ids1 = ids1[len(ids1)+len(ids2)-max_length:] # len = max_length-len(ids2)
         assert len(ids1)+len(ids2)==max_length
