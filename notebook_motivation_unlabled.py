@@ -29,10 +29,10 @@ class args:
     log_file = None
 
     task = None
-    dataset = "poem_sentiment"
+    dataset = "superglue-cb"
     k = 3
     seed = "42"
-    device = 2
+    device = 1
 
     test_batch_size = 4
     global_step = None
@@ -219,7 +219,7 @@ options = [dp["options"].index(dp["output"])]
 # %%
 accuracies = []
 args.k = 3 # select three labeled
-unlabeled_k = 3 
+unlabeled_k = 2
 num_trials = 1
 
 for dp_idx in range(len(test_data)):
