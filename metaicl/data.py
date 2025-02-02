@@ -92,7 +92,7 @@ class MetaICLData(object):
             text += self.print_tensorized_example(return_string=True)
         return ("="*50) + "\n" + text + "\n" + ("="*50)
 
-    def forward(self, demonstrations, idx, task):
+    def forward(self, demonstrations, dp, task):
         logger = logging.getLogger(__name__)
         device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
         tokenizer = self.tokenizer
@@ -104,17 +104,16 @@ class MetaICLData(object):
 
         max_length_per_example, max_length = 128, 256
         if self.use_demonstrations:
-            max_length = min(max_length * self.k, 1024)
+            max_length = min(max_length * self.k, 512)
 
         config_split = "test"
         # print("*******task*******")
         # print(task)
-        val_data = load_data(None, "dev", self.k, seed=42, config_split=config_split,
-                    datasets=[task], is_null=self.is_null)
+
 
         def run_a_forward_pass(input_tokens, output_tokens, tokenizer):
             encoded = prepro_sentence_pair_single(
-                        input_tokens, output_tokens, max_length=1024, bos_token_id=tokenizer.bos_token_id, eos_token_id=tokenizer.eos_token_id,
+                        input_tokens, output_tokens, max_length=512, bos_token_id=tokenizer.bos_token_id, eos_token_id=tokenizer.eos_token_id,
                         allow_truncation=self.use_demonstrations
                 )
             input_ids = torch.LongTensor([encoded[0]])
@@ -126,8 +125,6 @@ class MetaICLData(object):
             results = metaicl_model.run_model(input_ids, attention_mask, token_type_ids)
             return input_ids, results.cpu().detach().item()
 
-        dp_idx = idx
-        dp = val_data[dp_idx]
         option_tokens = [tokenizer(option)["input_ids"] for option in dp['options']]
         input_tokens = tokenizer("Input: " + dp["input"] + " " + "Label: ")["input_ids"]
         metaicl_model.model.eval()
@@ -149,8 +146,8 @@ class MetaICLData(object):
             input_str = "Input: "+ item["input"] + " "+ "Label: "+item["output"]+"\n"
         input_token = self.tokenizer(input_str)["input_ids"]
         for idx, dp in enumerate(dp_data):
-            label_id, _ = self.forward(input_token, idx, task)
-            if dp["options"][label_id] == dp["output"]: correct += 1
+            _, label = self.forward(input_token, dp, task)
+            if label == dp["output"]: correct += 1
         return correct / total if total > 0 else 0
 
     def greedy_select_subset(self, test_data, dp_data, subset_size=10):
@@ -248,6 +245,106 @@ class MetaICLData(object):
 
 
 
+
+    def tensorize_unlabeled(self, _test_data, _val_data, m, options=None, add_newlines=True):
+        val_data, test_data, unlab_data =  [], [], []
+        cut_point = len(_test_data)-len(_test_data)//4
+        for idx, dp in enumerate(_test_data):
+            if "output" not in dp: dp["output"] = dp["options"][0]
+            if idx < cut_point: test_data.append(dp.copy())
+            else: unlab_data.append(dp.copy())
+        for dp in _val_data:
+            if "output" not in dp: dp["output"] = dp["options"][0]
+            val_data.append(dp.copy())
+        task = _test_data[0]["task"]
+        test_features_path = f"./features/{task}_test_features.json"
+        with open(test_features_path, "r") as file:
+            test_features = json.load(file)
+        val_features_path = f"./features/{task}_val_features.json"
+        with open(val_features_path, "r") as file:
+            val_features = json.load(file)
+
+        input_ids, attention_mask, token_type_ids = [], [], []
+        metadata = []
+        if self.use_demonstrations:
+            test_texts = [dp["input"] + " " + dp["output"] for dp in test_data]
+            test_labels = [dp["output"] for dp in test_data]
+
+        all_indices = [i for i in range(len(test_data))]
+        # print(all_indices)
+        similarities = [0 for i in range(len(test_data))]
+        forsel, _ = self._forward_selection(
+            embeddings=test_features,
+            top_k_indices=all_indices,
+            m=m, 
+            candidate_labels=test_labels, 
+            test_data=test_data,
+            similarities = similarities,
+            seed=42
+        )
+        demonstration,psu_data = [], []
+        for dp in forsel:
+            demonstration+=self.tokenizer("Input: " + dp["input"] + " " + "Label: "+dp["output"])["input_ids"]
+        for idx, dp in enumerate(unlab_data):
+            used = dp["output"]
+            _, dp["output"]= self.forward(demonstration,dp,dp["task"])
+            self.logger.info(used+" ;;; "+dp["output"])
+            psu_data.append(dp)
+
+        for dp in psu_data:
+            test_data.append(dp)
+        test_labels = [dp["output"] for dp in test_data]
+        # print("len(test_data) : ",len(test_data))
+
+        for dp_idx, dp in enumerate(val_data):
+            inputs, outputs, answer = self._prepro_each_datapoint(
+                dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
+
+            if self.use_demonstrations:
+                test_text = dp["input"]
+                dp_feature = val_features[dp_idx]            
+
+                top_k_neighbors, top_k_indices, similarities = self._select_top_k_neighbors(
+                    dp_feature, test_features, test_data, self.k, len(test_data)+1
+                )
+                
+                # print("similarities : ",similarities)
+
+                forsel, _ = self._forward_selection(
+                    embeddings=test_features,
+                    top_k_indices=top_k_indices,
+                    m=m, 
+                    candidate_labels=test_labels, 
+                    test_data=test_data,
+                    similarities = similarities,
+                    seed=42
+                )
+
+                demonstrations = []
+                for i, neighbor_dp in enumerate(forsel):
+                    input_, output_ = self._prepro_each_datapoint(
+                        neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
+                    demonstrations += input_ + output_
+
+            indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
+
+            metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
+
+            for inputs_, outputs_ in zip(inputs, outputs):
+                if self.use_demonstrations:
+                    inputs_ = demonstrations + inputs_
+                encoded = prepro_sentence_pair_single(
+                    inputs_, outputs_, self.max_length, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
+                    allow_truncation=self.use_demonstrations
+                )
+                input_ids.append(encoded[0])
+                attention_mask.append(encoded[1])
+                token_type_ids.append(encoded[2])
+
+        self.tensorized_inputs = dict(input_ids=torch.LongTensor(input_ids),
+                                      attention_mask=torch.LongTensor(attention_mask),
+                                      token_type_ids=torch.LongTensor(token_type_ids))
+        self.metadata = metadata
 
 
 
@@ -396,13 +493,14 @@ class MetaICLData(object):
     def _select_top_k_neighbors(self, test_sample_embedding, test_embeddings, test_data, k, dp_idx):
         similarities = []
         for idx, dp in enumerate(test_embeddings):
-
             if idx == dp_idx:
                 similarities.append(-1.0)
                 continue
             similarity = 1 - cosine(test_sample_embedding, dp)
             similarities.append(similarity)
         top_k_indices = np.argsort(similarities)[-k:][::-1]
+        # print(top_k_indices)
+        # print("len(test_data)",len(test_data))
         return [test_data[i] for i in top_k_indices], top_k_indices , similarities
     
     def tensorize_topk(self, _test_data, _val_data, options=None, add_newlines=True):
@@ -957,6 +1055,7 @@ class MetaICLData(object):
             embeddings[idx] = embeddings[idx] / torch.norm(embeddings[idx])
 
         top_indice = np.argsort(similarities)[-1:][::-1]
+
         selected_indices = set(top_indice)
         top_k_indices = [item for item in top_k_indices if item != top_indice]
         remaining_indices = set(top_k_indices)
@@ -974,6 +1073,7 @@ class MetaICLData(object):
                 for idx1 in temp_selected:
                     cnt_pos = 0
                     pos_loss = 0.0
+                    # print("len(embeddings) : ", len(embeddings),"idx1 : ", idx1, "len(candidate_labels) : ",len(candidate_labels))
                     idx1_embedding, idx1_label = embeddings[idx1], candidate_labels[idx1]
                     logits = []
                     for idx2 in temp_selected:

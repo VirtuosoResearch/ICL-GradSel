@@ -159,6 +159,8 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
         metaicl_data.tensorize_supcon(test_data, val_data, args.m, options=None,  add_newlines=add_newlines)
     elif args.ground:
         metaicl_data.tensorize_ground(test_data, val_data, options=None,  add_newlines=add_newlines)
+    elif args.unlabeled:
+        metaicl_data.tensorize_unlabeled(test_data, val_data,args.m, options=None,  add_newlines=add_newlines)
     elif args.multidata:
         metaicl_data.tensorize_multidata(test_data, val_data, datapath, args.m, options=None, add_newlines=add_newlines)
     elif args.ranens:
@@ -187,8 +189,6 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
 
         losses = metaicl_model.do_inference(metaicl_data, args.test_batch_size)
         
-        # print("losses : ",losses)
-
         with open(cache_path, "wb") as f:
             pkl.dump(losses, f)
 
@@ -252,6 +252,7 @@ if __name__=='__main__':
     parser.add_argument("--randomk", default=False, action="store_true")
     parser.add_argument("--supcon", default=False, action="store_true")
     parser.add_argument("--ground", default=False, action="store_true")
+    parser.add_argument("--unlabeled", default=False, action="store_true")
     parser.add_argument("--multidata", default=False, action="store_true")
     parser.add_argument("--ranens", default=False, action="store_true")
     parser.add_argument("--forsel", default=False, action="store_true")
