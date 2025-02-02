@@ -82,7 +82,7 @@ def main(logger, args):
     logger.info("batch_size=%d\tmax_length=%d\tmax_length_per_example=%d" % (
         args.test_batch_size, max_length, max_length_per_example))
 
-    metaicl_data = MetaICLData(logger, tokenizer, args.method,args.use_demonstrations, args.k,
+    metaicl_data = MetaICLData(args.device ,logger, tokenizer, args.method,args.use_demonstrations, args.k,
                                max_length, max_length_per_example)
     # metaicl_data.to(device)
     results = []
@@ -142,7 +142,7 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
                                       "-topk" if args.topk else "",
                                       "-randomk" if args.randomk else "",
                                       "-supcon" if args.supcon else "",
-                                      "-unlabeled" if args.unlabeled else "",
+                                      "-ground" if args.ground else "",
                                       "-ranens" if args.ranens else "",
                                       "-forsel" if args.forsel else "",
                                       "-k={}".format(args.k) if args.use_demonstrations else "",
@@ -152,19 +152,19 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
 
     datapath = "./data/alldata.jsonl"
     if args.topk:
-        metaicl_data.tensorize_topk(test_data, val_data, add_newlines=add_newlines)
+        metaicl_data.tensorize_topk(test_data, val_data, options=None, add_newlines=add_newlines)
     elif args.randomk:
-        metaicl_data.tensorize_randomk(test_data, val_data, add_newlines=add_newlines)
+        metaicl_data.tensorize_randomk(test_data, val_data, options=None,  add_newlines=add_newlines)
     elif args.supcon:
-        metaicl_data.tensorize_supcon(test_data, val_data, args.m, add_newlines=add_newlines)
-    elif args.unlabeled:
-        metaicl_data.tensorize_unlabeled(test_data, val_data, add_newlines=add_newlines)
+        metaicl_data.tensorize_supcon(test_data, val_data, args.m, options=None,  add_newlines=add_newlines)
+    elif args.ground:
+        metaicl_data.tensorize_ground(test_data, val_data, options=None,  add_newlines=add_newlines)
     elif args.multidata:
-        metaicl_data.tensorize_multidata(test_data, val_data, datapath, args.m, add_newlines=add_newlines)
+        metaicl_data.tensorize_multidata(test_data, val_data, datapath, args.m, options=None, add_newlines=add_newlines)
     elif args.ranens:
-        metaicl_data.tensorize_ranens(test_data, val_data, args.m, args.seed, add_newlines=add_newlines)
+        metaicl_data.tensorize_ranens(test_data, val_data, args.m, args.seed, options=None, add_newlines=add_newlines)
     elif args.forsel:
-        metaicl_data.tensorize_forsel(test_data, val_data, args.m, args.seed, add_newlines=add_newlines)
+        metaicl_data.tensorize_forsel(test_data, val_data, args.m, args.seed, options=None, add_newlines=add_newlines)
 
     metaicl_data.print_tensorized_example()
     logger.info(cache_path)
@@ -251,7 +251,7 @@ if __name__=='__main__':
     parser.add_argument("--topk",default=False, action="store_true")
     parser.add_argument("--randomk", default=False, action="store_true")
     parser.add_argument("--supcon", default=False, action="store_true")
-    parser.add_argument("--unlabeled", default=False, action="store_true")
+    parser.add_argument("--ground", default=False, action="store_true")
     parser.add_argument("--multidata", default=False, action="store_true")
     parser.add_argument("--ranens", default=False, action="store_true")
     parser.add_argument("--forsel", default=False, action="store_true")
