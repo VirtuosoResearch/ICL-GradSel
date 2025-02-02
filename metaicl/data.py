@@ -7,6 +7,7 @@
 import os
 import csv
 import json
+import logging
 import string
 import numpy as np
 import pickle as pkl
@@ -17,6 +18,17 @@ from itertools import combinations
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
+# import sys
+# import os
+# sys.path.append(os.path.abspath(os.path.dirname(__file__) + "/.."))
+# from forward_path import Forward
+
+import nltk
+from nltk.corpus import wordnet
+import random
+
+# from data_augment import DataAugment
+
 from collections import defaultdict
 from functools import partial
 from multiprocessing import Pool
@@ -26,9 +38,14 @@ from sklearn.metrics.pairwise import cosine_similarity
 from scipy.spatial.distance import cosine
 from sklearn.linear_model import LinearRegression
 
+
+from utils.data import load_data
+from metaicl.model import MetaICLModel
+
+
 class MetaICLData(object):
 
-    def __init__(self, logger=None, tokenizer=None, method="channel", use_demonstrations=True, k=16,
+    def __init__(self, device=0, logger=None, tokenizer=None, method="channel", use_demonstrations=True, k=16,
                  max_length=1024, max_length_per_example=256,
                  do_tensorize=False, tensorize_dir=None, n_process=None, n_gpu=None, local_rank=-1):
 
@@ -48,6 +65,9 @@ class MetaICLData(object):
 
         self.tensorized_inputs = None
         self.metadata = None
+        self.device = device
+        self.is_null = False
+
 
         if self.tokenizer is None:
             from transformers import AutoTokenizer
@@ -71,6 +91,165 @@ class MetaICLData(object):
             text += "\n"
             text += self.print_tensorized_example(return_string=True)
         return ("="*50) + "\n" + text + "\n" + ("="*50)
+
+    def forward(self, demonstrations, idx, task):
+        logger = logging.getLogger(__name__)
+        device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
+        tokenizer = self.tokenizer
+
+        add_newlines = False
+        checkpoint = None
+        metaicl_model = MetaICLModel(logger=logger, out_dir= "./cache", device_num=self.device)
+        metaicl_model.load(checkpoint, gpt2="gpt2-large")
+
+        max_length_per_example, max_length = 128, 256
+        if self.use_demonstrations:
+            max_length = min(max_length * self.k, 1024)
+
+        config_split = "test"
+        # print("*******task*******")
+        # print(task)
+        val_data = load_data(None, "dev", self.k, seed=42, config_split=config_split,
+                    datasets=[task], is_null=self.is_null)
+
+        def run_a_forward_pass(input_tokens, output_tokens, tokenizer):
+            encoded = prepro_sentence_pair_single(
+                        input_tokens, output_tokens, max_length=1024, bos_token_id=tokenizer.bos_token_id, eos_token_id=tokenizer.eos_token_id,
+                        allow_truncation=self.use_demonstrations
+                )
+            input_ids = torch.LongTensor([encoded[0]])
+            attention_mask = torch.LongTensor([encoded[1]])
+            token_type_ids = torch.LongTensor([encoded[2]])
+            input_ids = input_ids.to(device)
+            attention_mask = attention_mask.to(device)
+            token_type_ids = token_type_ids.to(device)
+            results = metaicl_model.run_model(input_ids, attention_mask, token_type_ids)
+            return input_ids, results.cpu().detach().item()
+
+        dp_idx = idx
+        dp = val_data[dp_idx]
+        option_tokens = [tokenizer(option)["input_ids"] for option in dp['options']]
+        input_tokens = tokenizer("Input: " + dp["input"] + " " + "Label: ")["input_ids"]
+        metaicl_model.model.eval()
+        metaicl_model.model.to(device)
+        demonstrations = []
+
+        one_trial_losses = []
+        for option_token in option_tokens:
+            input_ids, results = run_a_forward_pass(demonstrations + input_tokens, option_token, tokenizer)
+            one_trial_losses.append(results)
+
+        label_id = np.argmin(one_trial_losses)
+        label = dp["options"][label_id]
+        return label_id, label
+
+    def evaluate_accuracy(self, demonstrations, dp_data, task):
+        correct = 0; total = len(dp_data)
+        for item in demonstrations:
+            input_str = "Input: "+ item["input"] + " "+ "Label: "+item["output"]+"\n"
+        input_token = self.tokenizer(input_str)["input_ids"]
+        for idx, dp in enumerate(dp_data):
+            label_id, _ = self.forward(input_token, idx, task)
+            if dp["options"][label_id] == dp["output"]: correct += 1
+        return correct / total if total > 0 else 0
+
+    def greedy_select_subset(self, test_data, dp_data, subset_size=10):
+        selected_indices, best_demonstrations = [], []
+        best_demonstrations = []
+        best_accuracy = 0.0
+        while len(selected_indices) < subset_size:
+            best_candidate = None
+            for i in range(len(test_data)):
+                if i in selected_indices: continue
+                candidate_demonstrations = best_demonstrations + [test_data[i]]
+                print(candidate_demonstrations)
+                candidate_accuracy = self.evaluate_accuracy(candidate_demonstrations, dp_data, test_data[0]["task"])
+                
+                print(f"----------------candidate_accuracy : {candidate_accuracy}----------------")
+                if candidate_accuracy > best_accuracy:
+                    best_candidate = i
+                    best_accuracy = candidate_accuracy
+                print(best_candidate)
+            if best_candidate is None:
+                print("Greedy search has converged.")
+                break
+            selected_indices.append(best_candidate)
+            best_demonstrations.append(test_data[best_candidate])
+        return best_demonstrations, best_accuracy
+
+    def tensorize_ground(self, _test_data, _val_data, options=None, add_newlines=True):
+        print("options: ", options)
+        if options is not None:
+            print("len(_test_data) : ", len(_test_data))
+            print(_test_data[0])
+            for i, dp in enumerate(_test_data):
+                assert "options" not in dp,print(i,dp)
+                _test_data[i] = {"input": dp, "options": options}
+            for i, dp in enumerate(_val_data):
+                assert "options" not in dp
+                _val_data[i] = {"input": dp, "options": options}
+        print("len(_test_data) : ",len(_test_data))
+        print("len(_val_data) : ", len(_val_data))
+
+        val_data, dp_data, test_data = [], [], []
+        for dp in _test_data:
+            if "output" not in dp: dp["output"] = dp["options"][0]
+            test_data.append(dp.copy())
+        for idx, dp in enumerate(_val_data):
+            if "output" not in dp: dp["output"] = dp["options"][0]
+            if idx<= len(_val_data)//2: val_data.append(dp.copy())
+            else: dp_data.append(dp.copy())
+        task = _test_data[0]["task"]
+        with open(f"./features/{task}_test_features.json", "r") as file: test_features = json.load(file)
+        with open(f"./features/{task}_val_features.json", "r") as file: val_features = json.load(file)
+
+        if self.use_demonstrations:
+            test_texts = [dp["input"] + " " + dp["output"] for dp in test_data]
+            test_labels = [dp["output"] for dp in test_data]
+
+        input_ids, attention_mask, token_type_ids = [], [], []
+        metadata = []
+
+        for dp_idx, dp in enumerate(val_data):
+            inputs, outputs, answer = self._prepro_each_datapoint(
+                dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
+
+            if self.use_demonstrations:
+                test_text = dp["input"]
+                dp_feature = val_features[dp_idx]
+
+                ground, _ = self.greedy_select_subset(test_data=test_data, dp_data=dp_data, subset_size=self.k)
+                # def greedy_select_subset(self, test_data, dp_data, subset_size=10):
+                demonstrations = []
+                for i, neighbor_dp in enumerate(ground):
+                    input_, output_ = self._prepro_each_datapoint(
+                        neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
+                    demonstrations += input_ + output_
+
+            indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
+
+            metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
+
+            for inputs_, outputs_ in zip(inputs, outputs):
+                if self.use_demonstrations:
+                    inputs_ = demonstrations + inputs_
+                encoded = prepro_sentence_pair_single(
+                    inputs_, outputs_, self.max_length, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
+                    allow_truncation=self.use_demonstrations
+                )
+                input_ids.append(encoded[0])
+                attention_mask.append(encoded[1])
+                token_type_ids.append(encoded[2])
+
+        self.tensorized_inputs = dict(input_ids=torch.LongTensor(input_ids),
+                                      attention_mask=torch.LongTensor(attention_mask),
+                                      token_type_ids=torch.LongTensor(token_type_ids))
+        self.metadata = metadata
+
+
+
+
+
 
     def get_dataloader(self, batch_size, is_training):
         inputs = self.tensorized_inputs
@@ -194,8 +373,6 @@ class MetaICLData(object):
 
         else:
             assert len(dp["options"])>=2, dp
-            # print("dp[\"output\"]",dp["output"])
-            # print("dp[\"options\"]",dp["options"])
             assert dp["output"] in dp["options"]
             option_tokens = [self.tokenizer(option)["input_ids"] for option in dp["options"]]
             option_length = np.max([len(option) for option in option_tokens])
@@ -225,20 +402,24 @@ class MetaICLData(object):
                 continue
             similarity = 1 - cosine(test_sample_embedding, dp)
             similarities.append(similarity)
-
-        # print("k : ",k)
-        # print("similarities : ",similarities)
         top_k_indices = np.argsort(similarities)[-k:][::-1]
         return [test_data[i] for i in top_k_indices], top_k_indices , similarities
     
-    def tensorize_topk(self, _test_data, options=None, add_newlines=True):
+    def tensorize_topk(self, _test_data, _val_data, options=None, add_newlines=True):
         if options is not None:
             for i, dp in enumerate(_test_data):
+                print(i,dp)
                 assert "options" not in dp
                 assert type(dp) == str
                 _test_data[i] = {"input": dp, "options": options}
+            for i, dp in enumerate(_val_data):
+                assert "options" not in dp
+                assert type(dp) == str
+                _val_data[i] = {"input": dp, "options": options}
         print("len(_test_data) : ",len(_test_data))
-        train_data, test_data =  [], []
+        print("len(_val_data) : ", len(_val_data))
+
+        val_data, test_data =  [], []
 
         for dp in _test_data:
             assert type(dp) == dict, ("Each example should be a dictionary", dp)
@@ -247,30 +428,31 @@ class MetaICLData(object):
             if "output" not in dp:
                 dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
             test_data.append(dp.copy())
+        for dp in _val_data:
+            assert type(dp) == dict, ("Each example should be a dictionary", dp)
+            assert "input" in dp and "options" in dp and type(dp["options"]) == list, \
+                ("Test example should contain input and options in a list format", dp)
+            if "output" not in dp:
+                dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
+            val_data.append(dp.copy())
         
         task = _test_data[0]["task"]
-        features_path = f"./features/{task}_features.json"
-        with open(features_path, "r") as file:
+        test_features_path = f"./features/{task}_test_features.json"
+        with open(test_features_path, "r") as file:
             test_features = json.load(file)
-        
-        # print("--"*20)
-        # print(len(test_features))
-        # print("--"*20)
-
-        if self.use_demonstrations:
-            test_texts = [dp["input"] + " " + dp["output"] for dp in test_data]
+        val_features_path = f"./features/{task}_val_features.json"
+        with open(val_features_path, "r") as file:
+            val_features = json.load(file)
 
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
 
-        for dp_idx, dp in enumerate(test_data):
+        for dp_idx, dp in enumerate(val_data):
             inputs, outputs, answer = self._prepro_each_datapoint(
                 dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
 
             if self.use_demonstrations:
-                # if dp_idx>=len(test_features):
-                #     print(f"len(test_data): {len(test_data)} dp_idx: {dp_idx} len(test_features): {len(test_features)}")
-                dp_feature = test_features[dp_idx]            
+                dp_feature = val_features[dp_idx]            
 
                 top_k_neighbors, _, __ = self._select_top_k_neighbors(
                     dp_feature, test_features, test_data, self.k, dp_idx
@@ -329,8 +511,6 @@ class MetaICLData(object):
             
             # compute supcon loss
             con_loss, pos_loss, all_loss = 0.0, 0.0, 0.0
-            
-            # con_loss = torch.tensor(0.0, dtype=float)
             temperature=0.1
             if softloss==False:
                 for idx1 in combination:
@@ -364,14 +544,11 @@ class MetaICLData(object):
                             pos_loss += torch.exp(similarity)
                             cnt_pos += 1
 
-                    
                     logits = torch.tensor(logits)
                     logits_max = torch.max(logits)
                     logits = logits - logits_max.detach()
-
                     exp_logits = torch.exp(logits)
                     exp_logits_sum = exp_logits.sum()
-                    
                     if cnt_pos > 0:
                         pos_prob = pos_loss / exp_logits_sum 
                         idx_loss = pos_prob / cnt_pos 
@@ -391,15 +568,20 @@ class MetaICLData(object):
             
         return best_combination_data, best_labels
 
-    def tensorize_supcon(self, _test_data, m, options=None, add_newlines=True):
+    def tensorize_supcon(self, _test_data, _val_data, m, options=None, add_newlines=True):
         if options is not None:
             for i, dp in enumerate(_test_data):
                 assert "options" not in dp
                 assert type(dp) == str
                 _test_data[i] = {"input": dp, "options": options}
+            for i, dp in enumerate(_val_data):
+                assert "options" not in dp
+                assert type(dp) == str
+                _val_data[i] = {"input": dp, "options": options}
+        print("len(_test_data) : ",len(_test_data))
+        print("len(_val_data) : ", len(_val_data))
 
-        train_data, test_data, test_labels = [], [], []
-
+        val_data, test_data =  [], []
 
         for dp in _test_data:
             assert type(dp) == dict, ("Each example should be a dictionary", dp)
@@ -408,13 +590,22 @@ class MetaICLData(object):
             if "output" not in dp:
                 dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
             test_data.append(dp.copy())
-
-
-        task = _test_data[0]["task"]
-        features_path = f"./features/{task}_features.json"
-        with open(features_path, "r") as file:
-            test_features = json.load(file)
+        for dp in _val_data:
+            assert type(dp) == dict, ("Each example should be a dictionary", dp)
+            assert "input" in dp and "options" in dp and type(dp["options"]) == list, \
+                ("Test example should contain input and options in a list format", dp)
+            if "output" not in dp:
+                dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
+            val_data.append(dp.copy())
         
+        task = _test_data[0]["task"]
+        test_features_path = f"./features/{task}_test_features.json"
+        with open(test_features_path, "r") as file:
+            test_features = json.load(file)
+        val_features_path = f"./features/{task}_val_features.json"
+        with open(val_features_path, "r") as file:
+            val_features = json.load(file)
+
 
         if self.use_demonstrations:
             test_texts = [dp["input"] + " " + dp["output"] for dp in test_data]
@@ -423,19 +614,17 @@ class MetaICLData(object):
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
 
-        for dp_idx, dp in enumerate(test_data):
+        for dp_idx, dp in enumerate(val_data):
             inputs, outputs, answer = self._prepro_each_datapoint(
                 dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
 
             if self.use_demonstrations:
                 test_text = dp["input"]
-                dp_feature = test_features[dp_idx]            
+                dp_feature = val_features[dp_idx]            
 
                 top_k_neighbors, top_k_indices, similarities = self._select_top_k_neighbors(
                     dp_feature, test_features, test_data, self.k, dp_idx
                 )
-                
-                # print("similarities : ",similarities)
 
                 greedy, best_labels = self.greedy_supcon(
                     embeddings=test_features,
@@ -446,27 +635,6 @@ class MetaICLData(object):
                     similarities = similarities
                 )
 
-                # file_path = f"./labels/{task}_{self.k}_{m}.json"
-
-                # if os.path.exists(file_path):
-                #     with open(file_path, "r") as file:
-                #         try:
-                #             existing_data = json.load(file) 
-                #         except json.JSONDecodeError:
-                #             existing_data = [] 
-                # else:
-                #     existing_data = []
-                # item = {idx : val for idx,val in enumerate(best_labels)}
-                # existing_data.append(item)
-
-                # with open(file_path, "w") as file:
-                #     json.dump(existing_data, file, indent=4)
-
-                # file_path = 
-                # with open (f"./labels/{task}_{self.k}_{m}.json","a") as file:
-                #     file.write("\n".join(map(str, best_labels)) + "\n")
-                # print("-----------Greedy------------")
-                # print(greedy)
                 demonstrations = []
                 for i, neighbor_dp in enumerate(greedy):
                     input_, output_ = self._prepro_each_datapoint(
@@ -579,15 +747,20 @@ class MetaICLData(object):
         return [test_data[x] for x in real_indices]
 
      
-    def tensorize_ranens(self, _test_data, m, seed, options=None, add_newlines=True):
+    def tensorize_ranens(self, _test_data, _val_data, m, seed, options=None, add_newlines=True):
         if options is not None:
             for i, dp in enumerate(_test_data):
                 assert "options" not in dp
                 assert type(dp) == str
                 _test_data[i] = {"input": dp, "options": options}
+            for i, dp in enumerate(_val_data):
+                assert "options" not in dp
+                assert type(dp) == str
+                _val_data[i] = {"input": dp, "options": options}
+        print("len(_test_data) : ",len(_test_data))
+        print("len(_val_data) : ", len(_val_data))
 
-        train_data, test_data, test_labels = [], [], []
-
+        val_data, test_data =  [], []
 
         for dp in _test_data:
             assert type(dp) == dict, ("Each example should be a dictionary", dp)
@@ -596,12 +769,21 @@ class MetaICLData(object):
             if "output" not in dp:
                 dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
             test_data.append(dp.copy())
-
-
+        for dp in _val_data:
+            assert type(dp) == dict, ("Each example should be a dictionary", dp)
+            assert "input" in dp and "options" in dp and type(dp["options"]) == list, \
+                ("Test example should contain input and options in a list format", dp)
+            if "output" not in dp:
+                dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
+            val_data.append(dp.copy())
+        
         task = _test_data[0]["task"]
-        features_path = f"./features/{task}_features.json"
-        with open(features_path, "r") as file:
+        test_features_path = f"./features/{task}_test_features.json"
+        with open(test_features_path, "r") as file:
             test_features = json.load(file)
+        val_features_path = f"./features/{task}_val_features.json"
+        with open(val_features_path, "r") as file:
+            val_features = json.load(file)
         
 
         if self.use_demonstrations:
@@ -611,13 +793,13 @@ class MetaICLData(object):
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
 
-        for dp_idx, dp in enumerate(test_data):
+        for dp_idx, dp in enumerate(val_data):
             inputs, outputs, answer = self._prepro_each_datapoint(
                 dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
 
             if self.use_demonstrations:
                 test_text = dp["input"]
-                dp_feature = test_features[dp_idx]            
+                dp_feature = val_features[dp_idx]            
 
                 top_k_neighbors, top_k_indices, similarities = self._select_top_k_neighbors(
                     dp_feature, test_features, test_data, self.k, dp_idx
@@ -723,10 +905,8 @@ class MetaICLData(object):
             current_labels = [candidate_labels[i] for i in combination]
             lam=0.05
             simcon_loss = -simloss + lam*con_loss
-            # print("simloss : ",simloss, "con_loss : ",con_loss, "simcon_loss : ",simcon_loss)
             all_loss_list.append(simcon_loss)
 
-        # print(len(all_combinations), len(top_k_indices))
         X = np.zeros((cnt_samples, len(top_k_indices)))
         y = np.zeros(cnt_samples)
         model = LinearRegression()
@@ -740,12 +920,6 @@ class MetaICLData(object):
         
         model.fit(X,y)
         theta = model.coef_
-        # theta = list(enumerate(theta))
-        # theta = sorted(theta, key=lambda x: x[1])
-        # indices = [x[0] for x in theta[:-m]]
-        # # print("--*--"*10)
-        # # print(theta[:-m])
-        # real_id = [top_k_indices[i] for i in indices]
 
         selected_indices = set()
         remaining_indices = set(range(len(top_k_indices)))
@@ -772,7 +946,6 @@ class MetaICLData(object):
             remaining_indices.remove(best_candidate)
 
         real_id = [top_k_indices[idx] for idx in selected_indices]
-
 
         return [test_data[idx] for idx in real_id]
         
@@ -830,9 +1003,6 @@ class MetaICLData(object):
                 lam = 0.05
                 total_loss = -simloss + lam * con_loss
 
-                # print("--*--"*10)
-                # print(candidate, total_loss, best_loss)
-
                 if total_loss < best_loss:
                     best_loss = total_loss
                     best_candidate = candidate
@@ -841,19 +1011,23 @@ class MetaICLData(object):
             remaining_indices.remove(best_candidate)
 
         real_id = [idx for idx in selected_indices]
-        return [test_data[idx] for idx in real_id]
+        return [test_data[idx] for idx in real_id], real_id
 
 
-     
-    def tensorize_forsel(self, _test_data, m, seed, options=None, add_newlines=True):
+    def tensorize_forsel(self, _test_data, _val_data, m, seed, options=None, add_newlines=True):
         if options is not None:
             for i, dp in enumerate(_test_data):
                 assert "options" not in dp
                 assert type(dp) == str
                 _test_data[i] = {"input": dp, "options": options}
+            for i, dp in enumerate(_val_data):
+                assert "options" not in dp
+                assert type(dp) == str
+                _val_data[i] = {"input": dp, "options": options}
+        print("len(_test_data) : ",len(_test_data))
+        print("len(_val_data) : ", len(_val_data))
 
-        train_data, test_data, test_labels = [], [], []
-
+        val_data, test_data =  [], []
 
         for dp in _test_data:
             assert type(dp) == dict, ("Each example should be a dictionary", dp)
@@ -862,13 +1036,21 @@ class MetaICLData(object):
             if "output" not in dp:
                 dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
             test_data.append(dp.copy())
-
-
-        task = _test_data[0]["task"]
-        features_path = f"./features/{task}_features.json"
-        with open(features_path, "r") as file:
-            test_features = json.load(file)
+        for dp in _val_data:
+            assert type(dp) == dict, ("Each example should be a dictionary", dp)
+            assert "input" in dp and "options" in dp and type(dp["options"]) == list, \
+                ("Test example should contain input and options in a list format", dp)
+            if "output" not in dp:
+                dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
+            val_data.append(dp.copy())
         
+        task = _test_data[0]["task"]
+        test_features_path = f"./features/{task}_test_features.json"
+        with open(test_features_path, "r") as file:
+            test_features = json.load(file)
+        val_features_path = f"./features/{task}_val_features.json"
+        with open(val_features_path, "r") as file:
+            val_features = json.load(file)
 
         if self.use_demonstrations:
             test_texts = [dp["input"] + " " + dp["output"] for dp in test_data]
@@ -877,13 +1059,13 @@ class MetaICLData(object):
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
 
-        for dp_idx, dp in enumerate(test_data):
+        for dp_idx, dp in enumerate(val_data):
             inputs, outputs, answer = self._prepro_each_datapoint(
                 dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
 
             if self.use_demonstrations:
                 test_text = dp["input"]
-                dp_feature = test_features[dp_idx]            
+                dp_feature = val_features[dp_idx]            
 
                 top_k_neighbors, top_k_indices, similarities = self._select_top_k_neighbors(
                     dp_feature, test_features, test_data, self.k, dp_idx
@@ -891,7 +1073,7 @@ class MetaICLData(object):
                 
                 # print("similarities : ",similarities)
 
-                forsel = self._forward_selection(
+                forsel, _ = self._forward_selection(
                     embeddings=test_features,
                     top_k_indices=top_k_indices,
                     m=m, 
@@ -927,6 +1109,18 @@ class MetaICLData(object):
                                       token_type_ids=torch.LongTensor(token_type_ids))
         self.metadata = metadata
 
+    def synonym_augmentation(sentence, num_replacements=1):
+        words = sentence.split()
+        augmented_sentence = words.copy()
+        for _ in range(num_replacements):
+            word_to_replace = random.choice(words)
+            synonyms = wordnet.synsets(word_to_replace)
+            if synonyms:
+                synonym_words = [lemma.name() for syn in synonyms for lemma in syn.lemmas()]
+                if synonym_words:
+                    synonym = random.choice(synonym_words)
+                    augmented_sentence[words.index(word_to_replace)] = synonym.replace("_", " ")
+        return " ".join(augmented_sentence)
 
     def _select_random_k_neighbors(self, test_sample_embedding, test_embeddings, test_data, k, dp_idx):
         
@@ -1002,8 +1196,6 @@ class MetaICLData(object):
             metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
 
             for inputs_, outputs_ in zip(inputs, outputs):
-                # print("inputs_ : ",inputs_)
-                # print("outputs_ : ",outputs_)
                 if self.use_demonstrations:
                     inputs_ = demonstrations + inputs_
                 encoded = prepro_sentence_pair_single(
@@ -1019,94 +1211,6 @@ class MetaICLData(object):
                                       token_type_ids=torch.LongTensor(token_type_ids))
         self.metadata = metadata
 
-    # def _select_unlabeled(self, test_data, k, dp_idx):
-        
-    #     length = len(test_data)
-    #     candidates = [i for i in range(length) if i!= dp_idx]
-    #     random_indices = random.sample(candidates, k)
-
-    #     return [test_data[i] for i in random_indices]
-    
-
-    def tensorize_unlabeled(self, _test_data, options=None, add_newlines=True):
-
-
-        print(("-"*20))
-        print(f"len(_test_data): {len(_test_data)}")
-        train_data, test_data = [], []
-
-        for dp in _test_data:
-            assert type(dp) == dict, ("Each example should be a dictionary", dp)
-            assert "input" in dp and "options" in dp and type(dp["options"]) == list, \
-                ("Test example should contain input and options in a list format", dp)
-            if "output" not in dp:
-                dp["output"] = dp["options"][0]  
-            test_data.append(dp.copy())
-
-        print("-"*20)
-        print(f"len(test_data) : {len(test_data)}")
-
-        if self.use_demonstrations:
-            test_texts = [dp["input"] + " " + dp["output"] for dp in test_data]
-
-            test_embeddings = [
-                self.tokenizer.encode(text, add_special_tokens=False) for text in test_texts
-            ]
-            print(len(test_embeddings[0]), len(test_embeddings[1]), len(test_embeddings[2]))
-
-            test_embeddings_pad=[]
-            max_length=self.max_length_per_example
-            for i,embedding in enumerate(test_embeddings):
-                if len(embedding) > max_length:
-                    test_embeddings_pad.append(embedding[:max_length])
-                else:
-                    test_embeddings_pad.append(embedding + [0] * (max_length - len(embedding)))
-            print(len(test_embeddings_pad[0]), len(test_embeddings_pad[1]), len(test_embeddings_pad[2]))
-
-        input_ids, attention_mask, token_type_ids = [], [], []
-        metadata = []
-
-        for dp_idx, dp in enumerate(test_data):
-            inputs, outputs, answer = self._prepro_each_datapoint(
-                dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
-
-            if self.use_demonstrations:
-                test_text = dp["input"]
-                test_embedding = test_embeddings_pad[dp_idx]            
-
-                top_k_neighbors, _, __ = self._select_top_k_neighbors(
-                    test_embedding, test_embeddings_pad, test_data, self.k, dp_idx
-                )
-                demonstrations = []
-                for i, neighbor_dp in enumerate(top_k_neighbors):
-                    input_, output_ = self._prepro_each_datapoint(
-                        neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
-                    if i<= self.k//2:
-                        demonstrations += input_ + output_
-                    else:
-                        demonstrations += input_
-
-            indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
-
-            metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
-
-            for inputs_, outputs_ in zip(inputs, outputs):
-                # print("inputs_ : ",inputs_)
-                # print("outputs_ : ",outputs_)
-                if self.use_demonstrations:
-                    inputs_ = demonstrations + inputs_
-                encoded = prepro_sentence_pair_single(
-                    inputs_, outputs_, self.max_length, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
-                    allow_truncation=self.use_demonstrations
-                )
-                input_ids.append(encoded[0])
-                attention_mask.append(encoded[1])
-                token_type_ids.append(encoded[2])
-
-        self.tensorized_inputs = dict(input_ids=torch.LongTensor(input_ids),
-                                      attention_mask=torch.LongTensor(attention_mask),
-                                      token_type_ids=torch.LongTensor(token_type_ids))
-        self.metadata = metadata
 
     def _random_datasource(self, task, datapath, m):
         with open(datapath, "r") as file:
@@ -1289,10 +1393,6 @@ def prepro_sentence_pair_single(ids1, ids2, max_length,
                                 bos_token_id, eos_token_id,
                                 allow_truncation=False):
 
-    #if bos_token_id is not None:
-    #    ids1 = [bos_token_id] + ids1
-    #if eos_token_id is not None:
-    #    ids2 = ids2 + [eos_token_id]
     if allow_truncation and len(ids1)+len(ids2) > max_length:
         ids1 = ids1[len(ids1)+len(ids2)-max_length:] # len = max_length-len(ids2)
         assert len(ids1)+len(ids2)==max_length

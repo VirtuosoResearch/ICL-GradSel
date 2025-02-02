@@ -29,10 +29,10 @@ class args:
     log_file = None
 
     task = None
-    dataset = "superglue-cb"
+    dataset = "glue-rte"
     k = 3
     seed = "42"
-    device = 1
+    device = 0
 
     test_batch_size = 4
     global_step = None

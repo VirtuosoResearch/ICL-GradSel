@@ -104,7 +104,7 @@ class MetaICLModel(object):
 
         # model.to_device(self.device)
         self.model = model
-        print("self.device : ", self.device)
+        # print("self.device : ", self.device)
         self.model.to(self.device)
         
 

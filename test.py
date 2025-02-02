@@ -92,42 +92,30 @@ def main(logger, args):
 
     for seed in seeds:
 
-        test_data = load_data(args.task, args.split, args.k, seed=seed, config_split=config_split,
+        test_data = load_data(args.task, "test", args.k, seed=seed, config_split=config_split,
+                             datasets=None if args.dataset is None else args.dataset.split(","), is_null=args.is_null)
+        val_data = load_data(args.task, "dev", args.k, seed=seed, config_split=config_split,
                              datasets=None if args.dataset is None else args.dataset.split(","), is_null=args.is_null)
 
         print("*"*20)
         print(f"args.split : {args.split}")
 
-        test_counter = Counter()
+        test_task = test_data[0]["task"]
 
-        for dp in test_data:
-            test_counter[dp["task"]] += 1
-
-        for k, v in test_counter.items():
-            logger.info("[Test] %s\t%d" % (k, v))
-
-        logger.info("%s on %s (%d test)" % (args.method, args.task, len(test_counter)))
-
-        for test_task in test_counter:
-            curr_test_data = [dp for dp in test_data if dp["task"]==test_task]
-            assert len(curr_test_data)>0
-
-            config_file = "config/tasks/{}.json".format(test_task)
-            assert os.path.exists(config_file), config_file
-            with open(config_file, "r") as f:
-                config = json.load(f)
-            is_classification = config["task_type"]=="classification"
-            if is_classification:
-                options = curr_test_data[0]["options"]
-                assert np.all([d["options"]==options for d in curr_test_data])
-
-            result = run(logger, test_task, metaicl_data, metaicl_model,
-                         curr_test_data, seed, checkpoint, is_classification, add_newlines, tokenizer)
-
-            if result is None:
-                errors.append("%s/%s" % (test_task, seed))
-            else:
-                results.append(result)
+        config_file = "config/tasks/{}.json".format(test_task)
+        assert os.path.exists(config_file), config_file
+        with open(config_file, "r") as f:
+            config = json.load(f)
+        is_classification = config["task_type"]=="classification"
+        if is_classification:
+            options = test_data[0]["options"]
+            assert np.all([d["options"]==options for d in test_data])
+        result = run(logger, test_task, metaicl_data, metaicl_model,
+                     test_data, val_data, seed, checkpoint, is_classification, add_newlines, tokenizer)
+        if result is None:
+            errors.append("%s/%s" % (test_task, seed))
+        else:
+            results.append(result)
 
     if args.is_null:
         return
@@ -139,7 +127,7 @@ def main(logger, args):
         logger.info("Please see the error messages")
 
 
-def run(logger, task, metaicl_data, metaicl_model, test_data, seed,
+def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
         checkpoint, is_classification, add_newlines, tokenizer):
 
     if args.do_zeroshot:
@@ -164,19 +152,19 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, seed,
 
     datapath = "./data/alldata.jsonl"
     if args.topk:
-        metaicl_data.tensorize_topk(test_data, add_newlines=add_newlines)
+        metaicl_data.tensorize_topk(test_data, val_data, add_newlines=add_newlines)
     elif args.randomk:
-        metaicl_data.tensorize_randomk(test_data, add_newlines=add_newlines)
+        metaicl_data.tensorize_randomk(test_data, val_data, add_newlines=add_newlines)
     elif args.supcon:
-        metaicl_data.tensorize_supcon(test_data, args.m, add_newlines=add_newlines)
+        metaicl_data.tensorize_supcon(test_data, val_data, args.m, add_newlines=add_newlines)
     elif args.unlabeled:
-        metaicl_data.tensorize_unlabeled(test_data, add_newlines=add_newlines)
+        metaicl_data.tensorize_unlabeled(test_data, val_data, add_newlines=add_newlines)
     elif args.multidata:
-        metaicl_data.tensorize_multidata(test_data, datapath, args.m, add_newlines=add_newlines)
+        metaicl_data.tensorize_multidata(test_data, val_data, datapath, args.m, add_newlines=add_newlines)
     elif args.ranens:
-        metaicl_data.tensorize_ranens(test_data, args.m, args.seed, add_newlines=add_newlines)
+        metaicl_data.tensorize_ranens(test_data, val_data, args.m, args.seed, add_newlines=add_newlines)
     elif args.forsel:
-        metaicl_data.tensorize_forsel(test_data, args.m, args.seed, add_newlines=add_newlines)
+        metaicl_data.tensorize_forsel(test_data, val_data, args.m, args.seed, add_newlines=add_newlines)
 
     metaicl_data.print_tensorized_example()
     logger.info(cache_path)
@@ -222,7 +210,7 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, seed,
         losses -= bias_losses
 
     predictions = metaicl_model.do_predict(metaicl_data, losses=losses)
-    groundtruths = [dp["output"] for dp in test_data]
+    groundtruths = [dp["output"] for dp in val_data]
     perf = metaicl_data.evaluate(predictions, groundtruths, is_classification)
     logger.info("Accuracy=%s" % perf)
 
