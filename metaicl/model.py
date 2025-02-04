@@ -115,48 +115,6 @@ class MetaICLModel(object):
             torch.save(model_state_dict, os.path.join(self.out_dir, "model-{}.pt".format(step)))
             self.logger.info("Saving model parameters at step=%d" % step)
 
-    def setup_optimizer(self, optimization, num_training_steps, lr, weight_decay, warmup_steps):
-        no_decay = ['bias', 'LayerNorm.weight']
-        optimizer_grouped_parameters = [
-                {'params': [p for n, p in self.model.named_parameters() if not any(nd in n for nd in no_decay)], 'weight_decay': weight_decay},
-                {'params': [p for n, p in self.model.named_parameters() if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
-        ]
-
-        if optimization=="adafactor":
-            optimizer = Adafactor(optimizer_grouped_parameters,
-                                  lr=lr,
-                                  relative_step=False,
-                                  warmup_init=False,
-                                  weight_decay=weight_decay)
-            scheduler = None
-        elif optimization.startswith("adamw"):
-            optimizer = AdamW(optimizer_grouped_parameters,
-                              lr=lr,
-                              eps=1e-08,
-                              weight_decay=weight_decay)
-            if self.fp16:
-                self.model, optimizer = setup_fp16(self.model, optimizer)
-            if optimization=="adamw":
-                scheduler = get_linear_schedule_with_warmup(optimizer,
-                                                            num_warmup_steps=warmup_steps,
-                                                            num_training_steps=num_training_steps)
-            else:
-                raise NotImplementedError()
-        elif optimization=="8bit-adam":
-            import bitsandbytes as bnb
-            optimizer = bnb.optim.Adam8bit(optimizer_grouped_parameters,
-                                           lr=lr, betas=(0.9, 0.995))
-            if self.fp16:
-                self.model, optimizer = setup_fp16(self.model, optimizer)
-            scheduler = get_linear_schedule_with_warmup(optimizer,
-                                                        num_warmup_steps=warmup_steps,
-                                                        num_training_steps=num_training_steps)
-        else:
-            raise NotImplementedError()
-
-        self.optimizer = optimizer
-        self.scheduler = scheduler
-
     def parallel(self):
         if self.n_gpu > 1:
             self.model = torch.nn.DataParallel(self.model)
@@ -225,17 +183,6 @@ class MetaICLModel(object):
         losses = losses.view(logits.size(0), logits.size(1)) * label_mask
         return torch.sum(losses, axis=1) / torch.sum(label_mask, axis=1)
 
-def setup_fp16(model, optimizer):
-    try:
-        import apex
-        from apex import amp
-        apex.amp.register_half_function(torch, "einsum")
-    except ImportError:
-        raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
-
-    fp16_opt_level = "O1"
-    model, optimizer = amp.initialize(model, optimizer, opt_level=fp16_opt_level)
-    return model, optimizer
 
 
 

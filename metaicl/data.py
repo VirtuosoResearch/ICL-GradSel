@@ -109,11 +109,6 @@ class MetaICLData(object):
         if self.use_demonstrations:
             max_length = min(max_length * self.k, 512)
 
-        config_split = "test"
-        # print("*******task*******")
-        # print(task)
-
-
         def run_a_forward_pass(input_tokens, output_tokens, tokenizer):
             encoded = prepro_sentence_pair_single(
                         input_tokens, output_tokens, max_length=512, bos_token_id=tokenizer.bos_token_id, eos_token_id=tokenizer.eos_token_id,
@@ -153,46 +148,6 @@ class MetaICLData(object):
             _, label = self.forward(gpt2, input_token, dp, task)
             if label == dp["output"]: correct += 1
         return correct / total if total > 0 else 0
-
-    def evaluate_accuracy_tylor(self, demonstrations, dp_data, task):
-        correct = 0; total = len(dp_data)
-        for item in demonstrations: input_str = "Input: "+ item["input"] + " "+ "Label: "+item["output"]+"\n"
-        input_tokens = self.tokenizer(input_str)["input_ids"]
-        
-        base_embedding = self.tokenizer(input_str, return_tensors="pt")["input_ids"].to(self.device)
-        base_embedding.requires_grad = True
-
-        output_S = self.forward(input_tokens, demonstrations[0], task)[0]
-        output_S.backward()
-        gradient_LM = base_embedding.grad
-
-        for idx, dp in enumerate(dp_data):
-            input_S_prime = "Input: " + dp["input"] + " " + "Label: " 
-            input_embedding_prime = self.tokenizer(input_S_prime, return_tensors="pt")["input_ids"].to(self.device)
-
-            # Compute P(S', x_q) - P(S, x_q)
-            delta_P = input_embedding_prime - base_embedding.detach()
-
-            # Compute Taylor approximation
-            taylor_approx = output_S.item() + torch.sum(gradient_LM * delta_P).item()
-
-            # Select label with the minimum loss
-            option_tokens = [self.tokenizer(option)["input_ids"] for option in dp['options']]
-            one_trial_losses = []
-            for option_token in option_tokens:
-                # Use Taylor approximation instead of forward pass
-                loss_approx = taylor_approx + torch.sum(gradient_LM * (torch.tensor(option_token).to(self.device) - base_embedding.detach())).item()
-                one_trial_losses.append(loss_approx)
-
-            label_id = np.argmin(one_trial_losses)
-            label = dp["options"][label_id]
-
-            if label == dp["output"]:
-                correct += 1
-
-        return correct / total if total > 0 else 0
-
-
 
     def greedy_select_subset(self, gpt2, test_data, dp_data, subset_size=10):
         selected_indices, best_demonstrations = [], []
