@@ -9,7 +9,7 @@ from metaicl.data import prepro_sentence_pair_single
 from utils.data import load_data
 
 class Forward():
-    def __init__(self, k=3, dataset="glue-rte"):
+    def __init__(self, gpt2="meta-llama/Llama-3.2-3B", device=0, k=3, dataset="glue-rte"):
         
         self.do_zeroshot = True
         self.use_demonstrations = True
@@ -19,15 +19,14 @@ class Forward():
         self.dataset = dataset
         self.k = k
         self.seed = 42
-        self.device = 0
-        self.test_batch_size = 4
+        self.device = device
         self.global_step = None
         self.checkpoint = None
         self.out_dir = "out/gpt2-large"
         self.split = "test"
         self.is_null = False
         self.method = "direct"
-        self.gpt2 = "gpt2-large"
+        self.gpt2 = gpt2
 
     def forward(self, idx):
         logger = logging.getLogger(__name__)
@@ -38,6 +37,15 @@ class Forward():
             tokenizer = AutoTokenizer.from_pretrained(self.gpt2)
         else:
             tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        
+        if "Llama" in self.gpt2:
+            special_tokens = {
+                "pad_token": "<pad>",
+                "unk_token": "<unk>",
+                "bos_token": "<bos>",
+                "eos_token": "<eos>"
+            }
+            tokenizer.add_special_tokens(special_tokens)
 
         add_newlines = not self.gpt2.startswith("gpt2")
         checkpoint = None
@@ -52,8 +60,12 @@ class Forward():
                                     max_length, max_length_per_example)
 
         config_split = "unseen_domain_test" if self.unseen_domain_only else "test"
-        test_data = load_data(None, self.split, self.k, seed=self.seed, config_split=config_split,
+        test_data = load_data(None, "test", self.k, seed=self.seed, config_split=config_split,
+                    datasets=None if self.dataset is None else self.dataset.split(","), is_null=self.is_null) 
+        val_data = load_data(None, "dev", self.k, seed=self.seed, config_split=config_split,
                     datasets=None if self.dataset is None else self.dataset.split(","), is_null=self.is_null)
+        print("len(test_data) : ",len(test_data))
+        print("len(val_data) : ",len(val_data))
         task = self.dataset
 
         with open(f"config/tasks/{task}.json", "r") as f:
@@ -99,3 +111,6 @@ class Forward():
         label_id = np.argmin(one_trial_losses)
         label = dp["options"][label_id]
         return label_id, label
+
+fwd = Forward()
+print(fwd.forward(0))
