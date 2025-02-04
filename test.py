@@ -135,7 +135,7 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
         if args.is_null:
             split_name += "-null"
         cache_path = os.path.join(args.out_dir,
-                                  "{}-{}-{}{}{}{}{}{}{}{}{}{}{}.pkl".format(
+                                  "{}-{}-{}{}{}{}{}{}{}{}{}{}{}{}.pkl".format(
                                       task,
                                       split_name,
                                       metaicl_data.method,
@@ -143,12 +143,13 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
                                       "-randomk" if args.randomk else "",
                                       "-supcon" if args.supcon else "",
                                       "-ground" if args.ground else "",
+                                      "-unlabeled" if args.unlabeled else "",
                                       "-ranens" if args.ranens else "",
                                       "-forsel" if args.forsel else "",
                                       "-k={}".format(args.k) if args.use_demonstrations else "",
                                       "-s={}".format(seed) if args.use_demonstrations or args.use_random_english_words else "",
                                       "" if add_newlines else "-no-newlines",
-                                      "-m={}".format(args.m) if args.supcon or args.ranens or args.forsel else ""))
+                                      "-m={}".format(args.m) if args.supcon or args.ranens or args.forsel or args.unlabeled or args.ground else ""))
 
     datapath = "./data/alldata.jsonl"
     if args.topk:
@@ -158,9 +159,9 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
     elif args.supcon:
         metaicl_data.tensorize_supcon(test_data, val_data, args.m, options=None,  add_newlines=add_newlines)
     elif args.ground:
-        metaicl_data.tensorize_ground(test_data, val_data, options=None,  add_newlines=add_newlines)
+        metaicl_data.tensorize_ground(args.gpt2, test_data, val_data, options=None,  add_newlines=add_newlines)
     elif args.unlabeled:
-        metaicl_data.tensorize_unlabeled(test_data, val_data,args.m, options=None,  add_newlines=add_newlines)
+        metaicl_data.tensorize_unlabeled(args.gpt2, test_data, val_data,args.m, options=None,  add_newlines=add_newlines)
     elif args.multidata:
         metaicl_data.tensorize_multidata(test_data, val_data, datapath, args.m, options=None, add_newlines=add_newlines)
     elif args.ranens:

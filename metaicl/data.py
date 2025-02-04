@@ -92,7 +92,7 @@ class MetaICLData(object):
             text += self.print_tensorized_example(return_string=True)
         return ("="*50) + "\n" + text + "\n" + ("="*50)
 
-    def forward(self, demonstrations, dp, task):
+    def forward(self, gpt2, demonstrations, dp, task):
         logger = logging.getLogger(__name__)
         device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
         tokenizer = self.tokenizer
@@ -100,7 +100,10 @@ class MetaICLData(object):
         add_newlines = False
         checkpoint = None
         metaicl_model = MetaICLModel(logger=logger, out_dir= "./cache", device_num=self.device)
-        metaicl_model.load(checkpoint, gpt2="gpt2-large")
+        metaicl_model.load(checkpoint, gpt2=gpt2)
+        
+        if "Llama" in gpt2:
+            metaicl_model.resize(tokenizer)
 
         max_length_per_example, max_length = 128, 256
         if self.use_demonstrations:
@@ -140,17 +143,58 @@ class MetaICLData(object):
         label = dp["options"][label_id]
         return label_id, label
 
-    def evaluate_accuracy(self, demonstrations, dp_data, task):
+    def evaluate_accuracy(self, gpt2, demonstrations, dp_data, task):
         correct = 0; total = len(dp_data)
+        input_str = ""
         for item in demonstrations:
-            input_str = "Input: "+ item["input"] + " "+ "Label: "+item["output"]+"\n"
+            input_str = input_str + "Input: "+ item["input"] + " "+ "Label: "+item["output"]+"\n"
         input_token = self.tokenizer(input_str)["input_ids"]
         for idx, dp in enumerate(dp_data):
-            _, label = self.forward(input_token, dp, task)
+            _, label = self.forward(gpt2, input_token, dp, task)
             if label == dp["output"]: correct += 1
         return correct / total if total > 0 else 0
 
-    def greedy_select_subset(self, test_data, dp_data, subset_size=10):
+    def evaluate_accuracy_tylor(self, demonstrations, dp_data, task):
+        correct = 0; total = len(dp_data)
+        for item in demonstrations: input_str = "Input: "+ item["input"] + " "+ "Label: "+item["output"]+"\n"
+        input_tokens = self.tokenizer(input_str)["input_ids"]
+        
+        base_embedding = self.tokenizer(input_str, return_tensors="pt")["input_ids"].to(self.device)
+        base_embedding.requires_grad = True
+
+        output_S = self.forward(input_tokens, demonstrations[0], task)[0]
+        output_S.backward()
+        gradient_LM = base_embedding.grad
+
+        for idx, dp in enumerate(dp_data):
+            input_S_prime = "Input: " + dp["input"] + " " + "Label: " 
+            input_embedding_prime = self.tokenizer(input_S_prime, return_tensors="pt")["input_ids"].to(self.device)
+
+            # Compute P(S', x_q) - P(S, x_q)
+            delta_P = input_embedding_prime - base_embedding.detach()
+
+            # Compute Taylor approximation
+            taylor_approx = output_S.item() + torch.sum(gradient_LM * delta_P).item()
+
+            # Select label with the minimum loss
+            option_tokens = [self.tokenizer(option)["input_ids"] for option in dp['options']]
+            one_trial_losses = []
+            for option_token in option_tokens:
+                # Use Taylor approximation instead of forward pass
+                loss_approx = taylor_approx + torch.sum(gradient_LM * (torch.tensor(option_token).to(self.device) - base_embedding.detach())).item()
+                one_trial_losses.append(loss_approx)
+
+            label_id = np.argmin(one_trial_losses)
+            label = dp["options"][label_id]
+
+            if label == dp["output"]:
+                correct += 1
+
+        return correct / total if total > 0 else 0
+
+
+
+    def greedy_select_subset(self, gpt2, test_data, dp_data, subset_size=10):
         selected_indices, best_demonstrations = [], []
         best_demonstrations = []
         best_accuracy = 0.0
@@ -159,22 +203,24 @@ class MetaICLData(object):
             for i in range(len(test_data)):
                 if i in selected_indices: continue
                 candidate_demonstrations = best_demonstrations + [test_data[i]]
-                print(candidate_demonstrations)
-                candidate_accuracy = self.evaluate_accuracy(candidate_demonstrations, dp_data, test_data[0]["task"])
+                self.logger.info(candidate_demonstrations)
+                candidate_accuracy = self.evaluate_accuracy(gpt2, candidate_demonstrations, dp_data, test_data[0]["task"])
                 
-                print(f"----------------candidate_accuracy : {candidate_accuracy}----------------")
+                self.logger.info(f"----------------candidate_accuracy : {candidate_accuracy}----------------")
                 if candidate_accuracy > best_accuracy:
                     best_candidate = i
                     best_accuracy = candidate_accuracy
-                print(best_candidate)
+                self.logger.info(f"best_candidate : {best_candidate}")
             if best_candidate is None:
                 print("Greedy search has converged.")
                 break
             selected_indices.append(best_candidate)
+            self.logger.info("**"*20)
+            self.logger.info(f"selected_indices: {selected_indices}")
             best_demonstrations.append(test_data[best_candidate])
         return best_demonstrations, best_accuracy
 
-    def tensorize_ground(self, _test_data, _val_data, options=None, add_newlines=True):
+    def tensorize_ground(self, gpt2, _test_data, _val_data, options=None, add_newlines=True):
         print("options: ", options)
         if options is not None:
             print("len(_test_data) : ", len(_test_data))
@@ -215,7 +261,7 @@ class MetaICLData(object):
                 test_text = dp["input"]
                 dp_feature = val_features[dp_idx]
 
-                ground, _ = self.greedy_select_subset(test_data=test_data, dp_data=dp_data, subset_size=self.k)
+                ground, _ = self.greedy_select_subset(gpt2=gpt2,test_data=test_data, dp_data=dp_data, subset_size=self.k)
                 # def greedy_select_subset(self, test_data, dp_data, subset_size=10):
                 demonstrations = []
                 for i, neighbor_dp in enumerate(ground):
@@ -246,7 +292,7 @@ class MetaICLData(object):
 
 
 
-    def tensorize_unlabeled(self, _test_data, _val_data, m, options=None, add_newlines=True):
+    def tensorize_unlabeled(self, gpt2, _test_data, _val_data, m, options=None, add_newlines=True):
         val_data, test_data, unlab_data =  [], [], []
         cut_point = len(_test_data)-len(_test_data)//4
         for idx, dp in enumerate(_test_data):
@@ -287,7 +333,7 @@ class MetaICLData(object):
             demonstration+=self.tokenizer("Input: " + dp["input"] + " " + "Label: "+dp["output"])["input_ids"]
         for idx, dp in enumerate(unlab_data):
             used = dp["output"]
-            _, dp["output"]= self.forward(demonstration,dp,dp["task"])
+            _, dp["output"]= self.forward(gpt2, demonstration,dp,dp["task"])
             self.logger.info(used+" ;;; "+dp["output"])
             psu_data.append(dp)
 
