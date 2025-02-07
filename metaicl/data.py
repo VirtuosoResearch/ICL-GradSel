@@ -346,11 +346,12 @@ class MetaICLData(object):
         best_accuracy = 0.0
         device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
         
+
         while len(selected_indices) < self.k:
             
             base_index = next(i for i in range(len(test_data)) if i not in selected_indices)
             base_test_example = test_data[base_index]
-            print(f"test_data[base_index] : {test_data[base_index]}")
+            # print(f"test_data[base_index] : {test_data[base_index]}")
             base_str = "Input: " + test_data[base_index]["input"] + " Label: " + test_data[base_index]["output"]+"\n"
 
             base_loss_lists, base_gradients = [], []
@@ -370,9 +371,9 @@ class MetaICLData(object):
             # embedding_gradient = torch.tensor(base_gradients, device=device)
             embedding_gradient = torch.stack([torch.stack(g, dim=0) for g in base_gradients], dim=0)
             self.logger.info(f"============ Done base estimate ============")
-
+            self.logger.info(f"====len(test_data): {len(test_data)}, self.k: {self.k}====")
             for i, candidate_test in enumerate(test_data):
-                if i in selected_indices or i == base_index: 
+                if (i in selected_indices) or (i == base_index): 
                     continue
                 candidate_str = "Input: " + candidate_test["input"] + " Label: " + candidate_test["output"]+"\n"
                 
@@ -398,15 +399,15 @@ class MetaICLData(object):
                         correct_count += 1
 
                 candidate_accuracy = correct_count / len(dev_data)
-
                 if candidate_accuracy > best_candidate_accuracy:
                     best_candidate = i
                     best_candidate_accuracy = candidate_accuracy
             
+            self.logger.info("-------------one loop done--------------")
             selected_indices.append(best_candidate)
             best_input_str += "Input: " + test_data[best_candidate]["input"] + " Label: " + test_data[best_candidate]["output"]+"\n"
             best_demonstrations.append(test_data[best_candidate])
-            print(f"Selected index {best_candidate}, current best accuracy: {best_candidate_accuracy:.4f}")
+            self.logger.info(f"Selected index {best_candidate}, current best accuracy: {best_candidate_accuracy:.4f}")
 
         return best_demonstrations, best_candidate_accuracy
 
@@ -442,22 +443,18 @@ class MetaICLData(object):
 
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
+        
+        ground, _ = self.greedy_select_subset2(gpt2=gpt2, test_data=test_data, dev_data=dev_data)
+        demonstrations = []
+        for i, neighbor_dp in enumerate(ground):
+            input_, output_ = self._prepro_each_datapoint(
+                neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
+            demonstrations += input_ + output_
 
         for dp_idx, dp in enumerate(val_data):
             inputs, outputs, answer = self._prepro_each_datapoint(
                 dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
-
-            if self.use_demonstrations:
-                test_text = dp["input"]
-                dp_feature = val_features[dp_idx]
-
-                ground, _ = self.greedy_select_subset2(gpt2=gpt2, test_data=test_data, dev_data=dev_data)
-
-                demonstrations = []
-                for i, neighbor_dp in enumerate(ground):
-                    input_, output_ = self._prepro_each_datapoint(
-                        neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
-                    demonstrations += input_ + output_
+                
 
             indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
 
