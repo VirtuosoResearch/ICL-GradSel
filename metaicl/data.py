@@ -16,6 +16,7 @@ import torch
 import random
 from itertools import combinations
 import warnings
+import torch.nn.functional as F
 warnings.filterwarnings("ignore", category=UserWarning)
 
 # import sys
@@ -138,18 +139,18 @@ class MetaICLData(object):
         label = dp["options"][label_id]
         return label_id, label
 
-    def evaluate_accuracy(self, gpt2, demonstrations, dp_data, task):
-        correct = 0; total = len(dp_data)
+    def evaluate_accuracy(self, gpt2, demonstrations, dev_data, task):
+        correct = 0; total = len(dev_data)
         input_str = ""
         for item in demonstrations:
             input_str = input_str + "Input: "+ item["input"] + " "+ "Label: "+item["output"]+"\n"
         input_token = self.tokenizer(input_str)["input_ids"]
-        for idx, dp in enumerate(dp_data):
+        for idx, dp in enumerate(dev_data):
             _, label = self.forward(gpt2, input_token, dp, task)
             if label == dp["output"]: correct += 1
         return correct / total if total > 0 else 0
 
-    def greedy_select_subset(self, gpt2, test_data, dp_data, subset_size=10):
+    def greedy_select_subset(self, gpt2, test_data, dev_data, subset_size=10):
         selected_indices, best_demonstrations = [], []
         best_demonstrations = []
         best_accuracy = 0.0
@@ -159,7 +160,7 @@ class MetaICLData(object):
                 if i in selected_indices: continue
                 candidate_demonstrations = best_demonstrations + [test_data[i]]
                 self.logger.info(candidate_demonstrations)
-                candidate_accuracy = self.evaluate_accuracy(gpt2, candidate_demonstrations, dp_data, test_data[0]["task"])
+                candidate_accuracy = self.evaluate_accuracy(gpt2, candidate_demonstrations, dev_data, test_data[0]["task"])
                 
                 self.logger.info(f"----------------candidate_accuracy : {candidate_accuracy}----------------")
                 if candidate_accuracy > best_accuracy:
@@ -189,14 +190,14 @@ class MetaICLData(object):
         print("len(_test_data) : ",len(_test_data))
         print("len(_val_data) : ", len(_val_data))
 
-        val_data, dp_data, test_data = [], [], []
+        val_data, dev_data, test_data = [], [], []
         for dp in _test_data:
             if "output" not in dp: dp["output"] = dp["options"][0]
             test_data.append(dp.copy())
         for idx, dp in enumerate(_val_data):
             if "output" not in dp: dp["output"] = dp["options"][0]
             if idx<= len(_val_data)//2: val_data.append(dp.copy())
-            else: dp_data.append(dp.copy())
+            else: dev_data.append(dp.copy())
         task = _test_data[0]["task"]
         with open(f"./features/{task}_test_features.json", "r") as file: test_features = json.load(file)
         with open(f"./features/{task}_val_features.json", "r") as file: val_features = json.load(file)
@@ -216,7 +217,7 @@ class MetaICLData(object):
                 test_text = dp["input"]
                 dp_feature = val_features[dp_idx]
 
-                ground, _ = self.greedy_select_subset(gpt2=gpt2,test_data=test_data, dp_data=dp_data, subset_size=self.k)
+                ground, _ = self.greedy_select_subset(gpt2=gpt2,test_data=test_data, dp_data=dev_data, subset_size=self.k)
                 # def greedy_select_subset(self, test_data, dp_data, subset_size=10):
                 demonstrations = []
                 for i, neighbor_dp in enumerate(ground):
@@ -244,6 +245,239 @@ class MetaICLData(object):
                                       token_type_ids=torch.LongTensor(token_type_ids))
         self.metadata = metadata
 
+    def compute_loss_and_gradient(self, gpt2, model, tokenizer, input_tokens, output_tokens, device):
+
+        tokenizer.pad_token = tokenizer.eos_token
+        input_ids = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=800).input_ids.to(device)
+        output_ids = tokenizer(output_tokens, return_tensors="pt")["input_ids"][0][-1].to(device)
+
+        with torch.no_grad():
+            if "gpt" in gpt2:
+                embedding = model.model.transformer.wte(input_ids)
+            else:
+                embedding = model.model.model.embed_tokens(input_ids)
+        embedding.requires_grad = True 
+
+        output_logits = model.model(inputs_embeds=embedding).logits
+        last_token_idx = input_ids.shape[1] - 1 
+        log_probs = F.log_softmax(output_logits[0, last_token_idx, :], dim=-1) 
+
+        target_token = output_ids
+        loss = -log_probs[target_token]
+        
+        # self.logger.info(f"target_token : {target_token}")
+        # self.logger.info(f"loss : {loss}")
+        
+        loss.backward()
+        return loss.item(), embedding.grad
+
+    def forward2(self, gpt2, demonstrations, dp, task, return_loss=False):
+
+        logger = logging.getLogger(__name__)
+        device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
+        tokenizer = self.tokenizer
+
+        metaicl_model = MetaICLModel(logger=logger, out_dir="./cache", device_num=self.device)
+        metaicl_model.load(None, gpt2=gpt2)
+        
+        if "Llama" in gpt2:
+            metaicl_model.resize(tokenizer)
+
+        option_tokens = dp['options']
+        input_tokens = demonstrations + "Input: " + dp["input"] + " Label:"
+
+        losses = []
+        gradients = []
+        for option in option_tokens:
+            loss, grad = self.compute_loss_and_gradient(gpt2, metaicl_model, tokenizer, input_tokens, option, device)
+            # compute_loss_and_gradient(self, gpt2, model, tokenizer, input_tokens, output_tokens, device):
+            losses.append(loss)
+            gradients.append(grad)
+
+        label_id = np.argmin(losses)
+        label = dp["options"][label_id]
+
+        if return_loss:
+            return losses, gradients, label_id
+        return label_id, label
+
+    def compute_embedding_difference(self, gpt2, base_str, candidate_str):
+        input_tokens_1 = self.tokenizer(base_str, return_tensors="pt", padding="max_length", truncation=True, max_length=800)["input_ids"]
+        input_tokens_2 = self.tokenizer(candidate_str, return_tensors="pt", padding="max_length", truncation=True, max_length=800)["input_ids"]
+        # print("base_str : ", base_str)
+        # print("candidate_str : ",candidate_str)
+        # print("input_tokens_1 : ",input_tokens_1)
+        # print("input_tokens_2 : ",input_tokens_2)
+        device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
+        tokenizer = self.tokenizer
+
+        metaicl_model = MetaICLModel(logger=self.logger, out_dir="./cache", device_num=self.device)
+        metaicl_model.load(None, gpt2=gpt2)
+        
+        if "Llama" in gpt2:
+            metaicl_model.resize(tokenizer)
+
+        input_tensor_1 = torch.tensor(input_tokens_1, device=self.device).unsqueeze(0)
+        input_tensor_2 = torch.tensor(input_tokens_2, device=self.device).unsqueeze(0)
+
+        with torch.no_grad():
+            if "gpt" in gpt2:
+                embedding_1 = metaicl_model.model.transformer.wte(input_tensor_1)
+                embedding_2 = metaicl_model.model.transformer.wte(input_tensor_2)
+            else:
+                embedding_1 = metaicl_model.model.model.embed_tokens(input_tensor_1)
+                embedding_2 = metaicl_model.model.model.embed_tokens(input_tensor_2)
+
+        delta_P = embedding_2 - embedding_1.detach()
+
+        # if torch.any(delta_P != 0):
+        #     print("Non-zero values found in delta_P:")
+        #     nonzero_indices = torch.nonzero(delta_P, as_tuple=True)
+        #     nonzero_values = delta_P[nonzero_indices]
+        #     for idx, val in zip(zip(*nonzero_indices), nonzero_values):
+        #         print(f"Index {idx}: {val.item()}")
+        # exit()
+
+        return delta_P
+
+    def greedy_select_subset2(self, gpt2, test_data, dev_data):
+        selected_indices, best_demonstrations = [], []
+        best_input_str = ""
+        best_accuracy = 0.0
+        device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
+        
+        while len(selected_indices) < self.k:
+            
+            base_index = next(i for i in range(len(test_data)) if i not in selected_indices)
+            base_test_example = test_data[base_index]
+            print(f"test_data[base_index] : {test_data[base_index]}")
+            base_str = "Input: " + test_data[base_index]["input"] + " Label: " + test_data[base_index]["output"]+"\n"
+
+            base_loss_lists, base_gradients = [], []
+            self.logger.info(f"============ len(dev_data): {len(dev_data)} ============")
+            cnt = 0
+            for dp in dev_data:
+                losses, grads, label_id = self.forward2(gpt2, best_input_str, dp, base_test_example["task"], return_loss=True)
+                base_loss_lists.append(losses)
+                base_gradients.append(grads)
+                cnt += (dp["options"][label_id]==dp["output"])
+
+            best_candidate = base_index
+            best_candidate_accuracy = cnt / len(dev_data)
+            self.logger.info(f"====== base_accuracy : {best_candidate_accuracy}")
+            # exit()
+            base_loss_tensor = torch.tensor(base_loss_lists, device=device)
+            # embedding_gradient = torch.tensor(base_gradients, device=device)
+            embedding_gradient = torch.stack([torch.stack(g, dim=0) for g in base_gradients], dim=0)
+            self.logger.info(f"============ Done base estimate ============")
+
+            for i, candidate_test in enumerate(test_data):
+                if i in selected_indices or i == base_index: 
+                    continue
+                candidate_str = "Input: " + candidate_test["input"] + " Label: " + candidate_test["output"]+"\n"
+                
+                correct_count = 0
+
+                for dp_idx, dp in enumerate(dev_data):
+                    dev_str = "Input: " + dp["input"] + " Label:"
+                    taylor_loss_list = []
+                    delta_P = self.compute_embedding_difference(gpt2, best_input_str+base_str+dev_str, best_input_str+candidate_str+dev_str)  # P(S', x_q) - P(S, x_q)
+
+                    for j in range(len(base_loss_lists[0])):
+                        taylor_correction = torch.sum(embedding_gradient[dp_idx][j] * delta_P).item()
+                        taylor_approx_loss = base_loss_tensor[dp_idx][j].item() + taylor_correction
+                        taylor_loss_list.append(taylor_approx_loss)
+
+                    # self.logger.info(f"delta_P : {delta_P}")
+                    self.logger.info(f"base_loss_lists : {base_loss_lists[dp_idx]}; taylor_loss_list : {taylor_loss_list}")
+
+                    predicted_label_id = np.argmin(taylor_loss_list)
+                    predicted_label = test_data[i]["options"][predicted_label_id]
+
+                    if predicted_label == dp["output"]:
+                        correct_count += 1
+
+                candidate_accuracy = correct_count / len(dev_data)
+
+                if candidate_accuracy > best_candidate_accuracy:
+                    best_candidate = i
+                    best_candidate_accuracy = candidate_accuracy
+            
+            selected_indices.append(best_candidate)
+            best_input_str += "Input: " + test_data[best_candidate]["input"] + " Label: " + test_data[best_candidate]["output"]+"\n"
+            best_demonstrations.append(test_data[best_candidate])
+            print(f"Selected index {best_candidate}, current best accuracy: {best_candidate_accuracy:.4f}")
+
+        return best_demonstrations, best_candidate_accuracy
+
+    def tensorize_estimate(self, gpt2, _test_data, _val_data, options=None, add_newlines=True):
+        print("options: ", options)
+        if options is not None:
+            print("len(_test_data) : ", len(_test_data))
+            print(_test_data[0])
+            for i, dp in enumerate(_test_data):
+                assert "options" not in dp,print(i,dp)
+                _test_data[i] = {"input": dp, "options": options}
+            for i, dp in enumerate(_val_data):
+                assert "options" not in dp
+                _val_data[i] = {"input": dp, "options": options}
+        print("len(_test_data) : ",len(_test_data))
+        print("len(_val_data) : ", len(_val_data))
+
+        val_data, dev_data, test_data = [], [], []
+        for dp in _test_data:
+            if "output" not in dp: dp["output"] = dp["options"][0]
+            test_data.append(dp.copy())
+        for idx, dp in enumerate(_val_data):
+            if "output" not in dp: dp["output"] = dp["options"][0]
+            if idx<= len(_val_data)//2: val_data.append(dp.copy())
+            else: dev_data.append(dp.copy())
+        task = _test_data[0]["task"]
+        with open(f"./features/{task}_test_features.json", "r") as file: test_features = json.load(file)
+        with open(f"./features/{task}_val_features.json", "r") as file: val_features = json.load(file)
+
+        if self.use_demonstrations:
+            test_texts = [dp["input"] + " " + dp["output"] for dp in test_data]
+            test_labels = [dp["output"] for dp in test_data]
+
+        input_ids, attention_mask, token_type_ids = [], [], []
+        metadata = []
+
+        for dp_idx, dp in enumerate(val_data):
+            inputs, outputs, answer = self._prepro_each_datapoint(
+                dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
+
+            if self.use_demonstrations:
+                test_text = dp["input"]
+                dp_feature = val_features[dp_idx]
+
+                ground, _ = self.greedy_select_subset2(gpt2=gpt2, test_data=test_data, dev_data=dev_data)
+
+                demonstrations = []
+                for i, neighbor_dp in enumerate(ground):
+                    input_, output_ = self._prepro_each_datapoint(
+                        neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
+                    demonstrations += input_ + output_
+
+            indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
+
+            metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
+
+            for inputs_, outputs_ in zip(inputs, outputs):
+                if self.use_demonstrations:
+                    inputs_ = demonstrations + inputs_
+                encoded = prepro_sentence_pair_single(
+                    inputs_, outputs_, self.max_length, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
+                    allow_truncation=self.use_demonstrations
+                )
+                input_ids.append(encoded[0])
+                attention_mask.append(encoded[1])
+                token_type_ids.append(encoded[2])
+
+        self.tensorized_inputs = dict(input_ids=torch.LongTensor(input_ids),
+                                      attention_mask=torch.LongTensor(attention_mask),
+                                      token_type_ids=torch.LongTensor(token_type_ids))
+        self.metadata = metadata
 
 
 

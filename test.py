@@ -135,7 +135,7 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
         if args.is_null:
             split_name += "-null"
         cache_path = os.path.join(args.out_dir,
-                                  "{}-{}-{}{}{}{}{}{}{}{}{}{}{}{}.pkl".format(
+                                  "{}-{}-{}{}{}{}{}{}{}{}{}{}{}{}{}.pkl".format(
                                       task,
                                       split_name,
                                       metaicl_data.method,
@@ -146,6 +146,7 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
                                       "-unlabeled" if args.unlabeled else "",
                                       "-ranens" if args.ranens else "",
                                       "-forsel" if args.forsel else "",
+                                      "-estim" if args.estim else "",
                                       "-k={}".format(args.k) if args.use_demonstrations else "",
                                       "-s={}".format(seed) if args.use_demonstrations or args.use_random_english_words else "",
                                       "" if add_newlines else "-no-newlines",
@@ -168,6 +169,8 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
         metaicl_data.tensorize_ranens(test_data, val_data, args.m, args.seed, options=None, add_newlines=add_newlines)
     elif args.forsel:
         metaicl_data.tensorize_forsel(test_data, val_data, args.m, args.seed, options=None, add_newlines=add_newlines)
+    elif args.estim:
+        metaicl_data.tensorize_estimate(args.gpt2, test_data, val_data, options=None,  add_newlines=add_newlines)
 
     metaicl_data.print_tensorized_example()
     logger.info(cache_path)
@@ -257,6 +260,7 @@ if __name__=='__main__':
     parser.add_argument("--multidata", default=False, action="store_true")
     parser.add_argument("--ranens", default=False, action="store_true")
     parser.add_argument("--forsel", default=False, action="store_true")
+    parser.add_argument("--estim", default=False, action="store_true")
     parser.add_argument("--m", type=int, default=4)
     parser.add_argument("--device", type=int, default=0)
     args = parser.parse_args()

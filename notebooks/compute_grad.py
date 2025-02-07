@@ -3,11 +3,14 @@ import torch
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-model_name = "gpt2-large"
-# tokenizer = GPT2Tokenizer.from_pretrained(model_name)
-# model = GPT2LMHeadModel.from_pretrained(model_name)
-tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-3B")
-model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.2-3B")
+# "gpt2-large" "meta-llama/Llama-3.2-3B"
+model_name = "meta-llama/Llama-3.2-1B"
+if "gpt2" in model_name:
+    tokenizer = GPT2Tokenizer.from_pretrained(model_name)
+    model = GPT2LMHeadModel.from_pretrained(model_name)
+elif "Llama" in model_name:
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForCausalLM.from_pretrained(model_name)
 
 model.eval()
 
@@ -30,8 +33,12 @@ tokens_S = tokenizer(sentence_S, return_tensors="pt", padding="max_length", trun
 tokens_S_prime = tokenizer(sentence_S_prime, return_tensors="pt", padding="max_length", truncation=True, max_length=512)
 
 with torch.no_grad():
-    embedding_S = model.transformer.wte(tokens_S["input_ids"])  # (1, seq_len, hidden_dim)
-    embedding_S_prime = model.transformer.wte(tokens_S_prime["input_ids"])  # (1, seq_len, hidden_dim)
+    if "gpt2" in model_name:
+        embedding_S = model.transformer.wte(tokens_S["input_ids"])  # (1, seq_len, hidden_dim)
+        embedding_S_prime = model.transformer.wte(tokens_S_prime["input_ids"])  # (1, seq_len, hidden_dim)
+    elif "Llama" in model_name:
+        embedding_S = model.model.embed_tokens(tokens_S["input_ids"])
+        embedding_S_prime = model.model.embed_tokens(tokens_S_prime["input_ids"])
 
 embedding_S.requires_grad = True
 
