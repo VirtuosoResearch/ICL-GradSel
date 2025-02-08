@@ -2,15 +2,24 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import GPT2LMHeadModel, GPT2Tokenizer
 from utils.data import load_data
 from tqdm import tqdm
 
-dataset_name = "glue-rte"
-model_name = "meta-llama/Llama-3.2-1B"
+# "meta-llama/Llama-3.2-1B"
+dataset_name = "superglue-cb"
+model_name = "gpt2-large"
 device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = AutoModelForCausalLM.from_pretrained(model_name).to(device)
+if "gpt2" in model_name:
+    tokenizer = GPT2Tokenizer.from_pretrained(model_name)
+    model = GPT2LMHeadModel.from_pretrained(model_name)
+elif "Llama" in model_name:
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForCausalLM.from_pretrained(model_name)
+
+model=model.to(device)
+
 model.eval()
 tokenizer.pad_token = tokenizer.eos_token
 
@@ -29,8 +38,11 @@ for option in anchor_dp["options"]:
     tokens_output = tokenizer(option, return_tensors="pt").input_ids[0][-1].to(device)
 
     with torch.no_grad():
-        embedding_input = model.model.embed_tokens(tokens_input)
+        if "gpt2" in model_name: embedding_input = model.transformer.wte(tokens_input)
+        else: embedding_input = model.model.embed_tokens(tokens_input)
     
+    anchor_embedding_input = embedding_input.clone().detach()
+
     embedding_input.requires_grad = True
 
     output_logits = model(inputs_embeds=embedding_input).logits
@@ -53,7 +65,8 @@ for dp in tqdm(test_data[1:]):
         tokens_output = tokenizer(option, return_tensors="pt").input_ids[0][-1].to(device)
 
         with torch.no_grad():
-            embedding_input = model.model.embed_tokens(tokens_input)
+            if "gpt2" in model_name: embedding_input = model.transformer.wte(tokens_input)
+            else: embedding_input = model.model.embed_tokens(tokens_input)
         
         embedding_input.requires_grad = True
 
@@ -74,7 +87,7 @@ for dp in tqdm(test_data[1:]):
 correct_predictions = 0
 total_samples = len(test_data) - 1 
 
-for idx, dp in tqdm(enumerate(test_data[1:])): 
+for idx, dp in tqdm(enumerate(test_data[1:])):
     option_losses = []
 
     for option in dp["options"]:
@@ -83,9 +96,10 @@ for idx, dp in tqdm(enumerate(test_data[1:])):
         tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=512).input_ids.to(device)
         
         with torch.no_grad():
-            embedding_dp_option = model.model.embed_tokens(tokens_input)
+            if "gpt2" in model_name: embedding_dp_option = model.transformer.wte(tokens_input)
+            else: embedding_dp_option = model.model.embed_tokens(tokens_input)
         
-        delta_P = embedding_dp_option - model.model.embed_tokens(tokens_input).detach()
+        delta_P = embedding_dp_option - anchor_embedding_input
         taylor_correction = torch.sum(anchor_gradients[option] * delta_P).item()
         estimated_loss = anchor_losses[option] + taylor_correction
 
