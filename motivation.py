@@ -60,6 +60,7 @@ def main(args):
         anchor_gradients[option] = embedding_input.grad.clone().detach()
 
     dp_label = []
+    dp_loss_all = []
     dp_loss, dp_gradients = {}, {}
     for dp in tqdm(test_data[1:]):
         for option in dp["options"]:
@@ -85,11 +86,14 @@ def main(args):
             dp_gradients[option] = embedding_input.grad.clone().detach()
             predicted_dp_idx = np.argmin(dp_loss)
 
+            dp_loss_all.append(dp_loss)
             dp_label.append(dp["options"][predicted_dp_idx])
 
 
     correct_predictions = 0
     total_samples = len(test_data) - 1 
+
+    current_error = 0.0
 
     for idx, dp in tqdm(enumerate(test_data[1:])):
         option_losses = []
@@ -97,7 +101,7 @@ def main(args):
         for option in dp["options"]:
             input_tokens = "Input: " + dp["input"] + " Label:"
 
-            tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=128).input_ids.to(device)
+            tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=256).input_ids.to(device)
             
             with torch.no_grad():
                 if "gpt2" in model_name: embedding_dp_option = model.transformer.wte(tokens_input)
@@ -112,12 +116,20 @@ def main(args):
         predicted_option_idx = np.argmin(option_losses)
         predicted_label = dp["options"][predicted_option_idx]
         
+        inference_loss = dp_loss_all[idx]
+        # print("inference_loss : ", inference_loss)
+        # print("option_losses : ", option_losses)
+
+        for jdx, label in enumerate(dp["options"]):
+            current_error+= np.fabs(inference_loss[label]-option_losses[jdx])/max(inference_loss[label], option_losses[jdx])
+
         if predicted_label == dp_label[idx]:
             correct_predictions += 1
 
     accuracy = correct_predictions / total_samples if total_samples > 0 else 0
-
-    print(accuracy)
+    current_error = current_error / total_samples / 3.0
+    print("error : ",current_error)
+    print("accuracy : ",accuracy)
 
 
 if __name__=="__main__":
