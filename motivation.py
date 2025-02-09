@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from transformers import GPT2LMHeadModel, GPT2Tokenizer
+from transformers import GPT2LMHeadModel, GPT2Tokenizer, OPTForCausalLM
 from utils.data import load_data
 from tqdm import tqdm
 import argparse
@@ -16,6 +16,9 @@ def main(args):
     if "gpt2" in model_name:
         tokenizer = GPT2Tokenizer.from_pretrained(model_name)
         model = GPT2LMHeadModel.from_pretrained(model_name)
+    elif "opt" in model_name:
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = OPTForCausalLM.from_pretrained(model_name)
     else:
         tokenizer = AutoTokenizer.from_pretrained(model_name)
         model = AutoModelForCausalLM.from_pretrained(model_name)
@@ -43,6 +46,7 @@ def main(args):
 
         with torch.no_grad():
             if "gpt2" in model_name: embedding_input = model.transformer.wte(tokens_input)
+            elif "opt" in model_name: embedding_input = model.model.decoder.embed_tokens(tokens_input)
             else: embedding_input = model.model.embed_tokens(tokens_input)
         
         anchor_embedding_input = embedding_input.clone().detach()
@@ -71,6 +75,7 @@ def main(args):
 
             with torch.no_grad():
                 if "gpt2" in model_name: embedding_input = model.transformer.wte(tokens_input)
+                elif "opt" in model_name: embedding_input = model.model.decoder.embed_tokens(tokens_input)
                 else: embedding_input = model.model.embed_tokens(tokens_input)
             
             embedding_input.requires_grad = True
@@ -105,6 +110,7 @@ def main(args):
             
             with torch.no_grad():
                 if "gpt2" in model_name: embedding_dp_option = model.transformer.wte(tokens_input)
+                elif "opt" in model_name: embedding_dp_option = model.model.decoder.embed_tokens(tokens_input)
                 else: embedding_dp_option = model.model.embed_tokens(tokens_input)
             
             delta_P = embedding_dp_option - anchor_embedding_input
