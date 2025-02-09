@@ -133,7 +133,7 @@ def main(args):
             correct_predictions += 1
 
     accuracy = correct_predictions / total_samples if total_samples > 0 else 0
-    current_error = current_error / total_samples / 3.0
+    current_error = current_error / total_samples / len(test_data[0]["options"])
     print("error : ",current_error)
     print("accuracy : ",accuracy)
 
