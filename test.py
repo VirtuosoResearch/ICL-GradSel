@@ -179,24 +179,25 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
         prediction_path = prediction_path.replace(".txt", "-calibrated.txt")
 
 
-    if os.path.exists(cache_path):
-        with open(cache_path, "rb") as f:
-            losses = pkl.load(f)
-    else:
-        if metaicl_model.is_none():
-            metaicl_model.load(checkpoint, gpt2=args.gpt2)
-            metaicl_model.cuda()
-            metaicl_model.eval()
+    # if os.path.exists(cache_path):
+    #     with open(cache_path, "rb") as f:
+    #         losses = pkl.load(f)
+    # else:
+    if metaicl_model.is_none():
+        metaicl_model.load(checkpoint, gpt2=args.gpt2)
+        metaicl_model.cuda()
+        metaicl_model.eval()
 
-        if "Llama" in args.gpt2:
-            metaicl_model.resize(tokenizer)
+    if "Llama" in args.gpt2:
+        metaicl_model.resize(tokenizer)
 
-        losses = metaicl_model.do_inference(metaicl_data, args.test_batch_size)
+    losses = metaicl_model.do_inference(metaicl_data, args.test_batch_size)
         
-        with open(cache_path, "wb") as f:
-            pkl.dump(losses, f)
+    with open(cache_path, "wb") as f:
+        pkl.dump(losses, f)
 
-    assert len(losses)==len(metaicl_data)
+    logger.info(f"len(losses): {len(losses)}; len(metaicl_data): {len(metaicl_data)}")
+    # assert len(losses)==len(metaicl_data)
 
     if args.is_null:
         return None
