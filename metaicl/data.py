@@ -153,26 +153,24 @@ class MetaICLData(object):
     def greedy_select_subset(self, gpt2, test_data, dev_data, subset_size=10):
         selected_indices, best_demonstrations = [], []
         best_demonstrations = []
-        best_accuracy = 0.0
+        
         while len(selected_indices) < subset_size:
-            best_candidate = None
+            base_index = next(i for i in range(len(test_data)) if i not in selected_indices)
+            best_candidate = base_index
+            best_accuracy = self.evaluate_accuracy(gpt2, best_demonstrations+[test_data[base_index]], dev_data, test_data[0]["task"])
             for i in range(len(test_data)):
-                if i in selected_indices: continue
+                if (i in selected_indices) or i==base_index: continue
                 candidate_demonstrations = best_demonstrations + [test_data[i]]
-                self.logger.info(candidate_demonstrations)
                 candidate_accuracy = self.evaluate_accuracy(gpt2, candidate_demonstrations, dev_data, test_data[0]["task"])
                 
                 self.logger.info(f"----------------candidate_accuracy : {candidate_accuracy}----------------")
                 if candidate_accuracy > best_accuracy:
                     best_candidate = i
                     best_accuracy = candidate_accuracy
-                self.logger.info(f"best_candidate : {best_candidate}")
-            if best_candidate is None:
-                print("Greedy search has converged.")
-                break
+
             selected_indices.append(best_candidate)
             self.logger.info("**"*20)
-            self.logger.info(f"selected_indices: {selected_indices}")
+            self.logger.info(f"selected_indices: {selected_indices}; best_candidate : {best_candidate}")
             best_demonstrations.append(test_data[best_candidate])
         return best_demonstrations, best_accuracy
 
@@ -209,6 +207,8 @@ class MetaICLData(object):
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
 
+        ground, _ = self.greedy_select_subset(gpt2=gpt2,test_data=test_data, dev_data=dev_data, subset_size=self.k)
+
         for dp_idx, dp in enumerate(val_data):
             inputs, outputs, answer = self._prepro_each_datapoint(
                 dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
@@ -217,7 +217,7 @@ class MetaICLData(object):
                 test_text = dp["input"]
                 dp_feature = val_features[dp_idx]
 
-                ground, _ = self.greedy_select_subset(gpt2=gpt2,test_data=test_data, dp_data=dev_data, subset_size=self.k)
+                
                 # def greedy_select_subset(self, test_data, dp_data, subset_size=10):
                 demonstrations = []
                 for i, neighbor_dp in enumerate(ground):
@@ -725,6 +725,7 @@ class MetaICLData(object):
     def _select_top_k_neighbors(self, test_sample_embedding, test_embeddings, test_data, k, dp_idx):
         similarities = []
         for idx, dp in enumerate(test_embeddings):
+            if idx == len(test_data): break
             if idx == dp_idx:
                 similarities.append(-1.0)
                 continue
@@ -732,6 +733,7 @@ class MetaICLData(object):
             similarities.append(similarity)
         top_k_indices = np.argsort(similarities)[-k:][::-1]
         # print(top_k_indices)
+        # print(len(similarities))
         # print("len(test_data)",len(test_data))
         return [test_data[i] for i in top_k_indices], top_k_indices , similarities
     
