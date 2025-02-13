@@ -24,8 +24,8 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # sys.path.append(os.path.abspath(os.path.dirname(__file__) + "/.."))
 # from forward_path import Forward
 
-import nltk
-from nltk.corpus import wordnet
+# import nltk
+# from nltk.corpus import wordnet
 import random
 
 # from data_augment import DataAugment
