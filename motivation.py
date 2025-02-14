@@ -99,6 +99,7 @@ def main(args):
     total_samples = len(test_data) - 1 
 
     current_error = 0.0
+    error_list = [] 
 
     for idx, dp in tqdm(enumerate(test_data[1:])):
         option_losses = []
@@ -107,12 +108,15 @@ def main(args):
             input_tokens = "Input: " + dp["input"] + " Label:"
 
             tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=256).input_ids.to(device)
-            
+
             with torch.no_grad():
-                if "gpt2" in model_name: embedding_dp_option = model.transformer.wte(tokens_input)
-                elif "opt" in model_name: embedding_dp_option = model.model.decoder.embed_tokens(tokens_input)
-                else: embedding_dp_option = model.model.embed_tokens(tokens_input)
-            
+                if "gpt2" in model_name: 
+                    embedding_dp_option = model.transformer.wte(tokens_input)
+                elif "opt" in model_name: 
+                    embedding_dp_option = model.model.decoder.embed_tokens(tokens_input)
+                else: 
+                    embedding_dp_option = model.model.embed_tokens(tokens_input)
+
             delta_P = embedding_dp_option - anchor_embedding_input
             taylor_correction = torch.sum(anchor_gradients[option] * delta_P).item()
             estimated_loss = anchor_losses[option] + taylor_correction
@@ -121,21 +125,30 @@ def main(args):
 
         predicted_option_idx = np.argmin(option_losses)
         predicted_label = dp["options"][predicted_option_idx]
-        
+
         inference_loss = dp_loss_all[idx]
-        # print("inference_loss : ", inference_loss)
-        # print("option_losses : ", option_losses)
 
+        sample_errors = []
         for jdx, label in enumerate(dp["options"]):
-            current_error+= np.fabs(inference_loss[label]-option_losses[jdx])/max(inference_loss[label], option_losses[jdx])
+            error = np.fabs(inference_loss[label] - option_losses[jdx]) / max(inference_loss[label], option_losses[jdx])
+            current_error += error
+            sample_errors.append(error)
 
+        error_list.append(np.mean(sample_errors)) 
         if predicted_label == dp_label[idx]:
             correct_predictions += 1
 
+    total_samples = len(test_data) - 1 
+
     accuracy = correct_predictions / total_samples if total_samples > 0 else 0
     current_error = current_error / total_samples / len(test_data[0]["options"])
-    print("error : ",current_error)
-    print("accuracy : ",accuracy)
+
+    error_variance = np.var(error_list) if error_list else 0
+
+    print("error : ", current_error)
+    print("error variance : ", error_variance)
+    print("accuracy : ", accuracy)
+
 
 
 if __name__=="__main__":
