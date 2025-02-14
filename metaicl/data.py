@@ -320,8 +320,8 @@ class MetaICLData(object):
                 embedding_1 = metaicl_model.transformer.wte(input_tokens_1)
                 embedding_2 = metaicl_model.transformer.wte(input_tokens_2)
             else:
-                embedding_1 = metaicl_model.embed_tokens(input_tokens_1)
-                embedding_2 = metaicl_model.embed_tokens(input_tokens_2)
+                embedding_1 = metaicl_model.model.embed_tokens(input_tokens_1)
+                embedding_2 = metaicl_model.model.embed_tokens(input_tokens_2)
 
         delta_P = embedding_2 - embedding_1.detach()
 
