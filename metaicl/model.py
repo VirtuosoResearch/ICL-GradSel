@@ -126,7 +126,7 @@ class MetaICLModel(object):
 
     def do_inference(self, data, batch_size=1, verbose=False):
         dataloader = data.get_dataloader(batch_size, is_training=False)
-
+        # self.logger.info(f"len(dataloader) : {len(dataloader)}")
         losses = []
         for batch in tqdm(dataloader):
             input_ids=batch[0].cuda()

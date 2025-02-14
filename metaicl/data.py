@@ -18,7 +18,9 @@ from itertools import combinations
 import warnings
 import torch.nn.functional as F
 warnings.filterwarnings("ignore", category=UserWarning)
-
+from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import GPT2LMHeadModel, GPT2Tokenizer, OPTForCausalLM
+from tqdm import tqdm
 # import sys
 # import os
 # sys.path.append(os.path.abspath(os.path.dirname(__file__) + "/.."))
@@ -253,12 +255,12 @@ class MetaICLData(object):
 
         with torch.no_grad():
             if "gpt" in gpt2:
-                embedding = model.model.transformer.wte(input_ids)
+                embedding = model.transformer.wte(input_ids)
             else:
-                embedding = model.model.model.embed_tokens(input_ids)
+                embedding = model.model.embed_tokens(input_ids)
         embedding.requires_grad = True 
 
-        output_logits = model.model(inputs_embeds=embedding).logits
+        output_logits = model(inputs_embeds=embedding).logits
         last_token_idx = input_ids.shape[1] - 1 
         log_probs = F.log_softmax(output_logits[0, last_token_idx, :], dim=-1) 
 
@@ -271,17 +273,17 @@ class MetaICLData(object):
         loss.backward()
         return loss.item(), embedding.grad
 
-    def forward2(self, gpt2, demonstrations, dp, task, return_loss=False):
+    def forward2(self, gpt2, metaicl_model, demonstrations, dp, task, return_loss=False):
 
         logger = logging.getLogger(__name__)
         device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
         tokenizer = self.tokenizer
 
-        metaicl_model = MetaICLModel(logger=logger, out_dir="./cache", device_num=self.device)
-        metaicl_model.load(None, gpt2=gpt2)
+        # metaicl_model = MetaICLModel(logger=logger, out_dir="./cache", device_num=self.device)
+        # metaicl_model.load(None, gpt2=gpt2)
         
         if "Llama" in gpt2:
-            metaicl_model.resize(tokenizer)
+            metaicl_model.resize_token_embeddings(len(tokenizer))
 
         option_tokens = dp['options']
         input_tokens = demonstrations + "Input: " + dp["input"] + " Label:"
@@ -301,42 +303,28 @@ class MetaICLData(object):
             return losses, gradients, label_id
         return label_id, label
 
-    def compute_embedding_difference(self, gpt2, base_str, candidate_str):
-        input_tokens_1 = self.tokenizer(base_str, return_tensors="pt", padding="max_length", truncation=True, max_length=800)["input_ids"]
-        input_tokens_2 = self.tokenizer(candidate_str, return_tensors="pt", padding="max_length", truncation=True, max_length=800)["input_ids"]
-        # print("base_str : ", base_str)
-        # print("candidate_str : ",candidate_str)
-        # print("input_tokens_1 : ",input_tokens_1)
-        # print("input_tokens_2 : ",input_tokens_2)
+    def compute_embedding_difference(self, gpt2, metaicl_model, base_str, candidate_str):
         device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
+        input_tokens_1 = self.tokenizer(base_str, return_tensors="pt", padding="max_length", truncation=True, max_length=800)["input_ids"].to(device)
+        input_tokens_2 = self.tokenizer(candidate_str, return_tensors="pt", padding="max_length", truncation=True, max_length=800)["input_ids"].to(device)
+
         tokenizer = self.tokenizer
 
-        metaicl_model = MetaICLModel(logger=self.logger, out_dir="./cache", device_num=self.device)
-        metaicl_model.load(None, gpt2=gpt2)
         
         if "Llama" in gpt2:
-            metaicl_model.resize(tokenizer)
+            metaicl_model.resize_token_embeddings(len(tokenizer))
 
-        input_tensor_1 = torch.tensor(input_tokens_1, device=self.device).unsqueeze(0)
-        input_tensor_2 = torch.tensor(input_tokens_2, device=self.device).unsqueeze(0)
 
         with torch.no_grad():
             if "gpt" in gpt2:
-                embedding_1 = metaicl_model.model.transformer.wte(input_tensor_1)
-                embedding_2 = metaicl_model.model.transformer.wte(input_tensor_2)
+                embedding_1 = metaicl_model.transformer.wte(input_tokens_1)
+                embedding_2 = metaicl_model.transformer.wte(input_tokens_2)
             else:
-                embedding_1 = metaicl_model.model.model.embed_tokens(input_tensor_1)
-                embedding_2 = metaicl_model.model.model.embed_tokens(input_tensor_2)
+                embedding_1 = metaicl_model.embed_tokens(input_tokens_1)
+                embedding_2 = metaicl_model.embed_tokens(input_tokens_2)
 
         delta_P = embedding_2 - embedding_1.detach()
 
-        # if torch.any(delta_P != 0):
-        #     print("Non-zero values found in delta_P:")
-        #     nonzero_indices = torch.nonzero(delta_P, as_tuple=True)
-        #     nonzero_values = delta_P[nonzero_indices]
-        #     for idx, val in zip(zip(*nonzero_indices), nonzero_values):
-        #         print(f"Index {idx}: {val.item()}")
-        # exit()
 
         return delta_P
 
@@ -345,7 +333,14 @@ class MetaICLData(object):
         best_input_str = ""
         best_accuracy = 0.0
         device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
-        
+        if "gpt2" in gpt2:
+            metaicl_model = GPT2LMHeadModel.from_pretrained(gpt2)
+        elif "opt" in gpt2:
+            metaicl_model = OPTForCausalLM.from_pretrained(gpt2)
+        else:
+            metaicl_model = AutoModelForCausalLM.from_pretrained(gpt2)
+        metaicl_model = metaicl_model.to(device)        
+
 
         while len(selected_indices) < self.k:
             
@@ -357,8 +352,8 @@ class MetaICLData(object):
             base_loss_lists, base_gradients = [], []
             self.logger.info(f"============ len(dev_data): {len(dev_data)} ============")
             cnt = 0
-            for dp in dev_data:
-                losses, grads, label_id = self.forward2(gpt2, best_input_str, dp, base_test_example["task"], return_loss=True)
+            for dp in tqdm(dev_data):
+                losses, grads, label_id = self.forward2(gpt2, metaicl_model, best_input_str, dp, base_test_example["task"], return_loss=True)
                 base_loss_lists.append(losses)
                 base_gradients.append(grads)
                 cnt += (dp["options"][label_id]==dp["output"])
@@ -382,7 +377,13 @@ class MetaICLData(object):
                 for dp_idx, dp in enumerate(dev_data):
                     dev_str = "Input: " + dp["input"] + " Label:"
                     taylor_loss_list = []
-                    delta_P = self.compute_embedding_difference(gpt2, best_input_str+base_str+dev_str, best_input_str+candidate_str+dev_str)  # P(S', x_q) - P(S, x_q)
+                    delta_P = self.compute_embedding_difference(gpt2, metaicl_model, best_input_str+base_str+dev_str, best_input_str+candidate_str+dev_str)  # P(S', x_q) - P(S, x_q)
+                    # delta_P = torch.zeros((1,1,800,1280), device="cuda:1")
+
+                    # self.logger.info(f"========delta_P:========\n{delta_P}")
+                    # self.logger.info(f"========delta_P.size(): {delta_P.size()}")
+                    # self.logger.info(f"========embedding_gradient:=======\n{embedding_gradient}")
+                    # self.logger.info(f"========embedding_gradient.size(): {embedding_gradient.size()}")
 
                     for j in range(len(base_loss_lists[0])):
                         taylor_correction = torch.sum(embedding_gradient[dp_idx][j] * delta_P).item()
