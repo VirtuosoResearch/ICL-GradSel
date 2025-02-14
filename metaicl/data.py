@@ -367,7 +367,7 @@ class MetaICLData(object):
             embedding_gradient = torch.stack([torch.stack(g, dim=0) for g in base_gradients], dim=0)
             self.logger.info(f"============ Done base estimate ============")
             self.logger.info(f"====len(test_data): {len(test_data)}, self.k: {self.k}====")
-            for i, candidate_test in enumerate(test_data):
+            for i, candidate_test in tqdm(enumerate(test_data), total=len(test_data), leave=True, position=0):
                 if (i in selected_indices) or (i == base_index): 
                     continue
                 candidate_str = "Input: " + candidate_test["input"] + " Label: " + candidate_test["output"]+"\n"
@@ -391,7 +391,7 @@ class MetaICLData(object):
                         taylor_loss_list.append(taylor_approx_loss)
 
                     # self.logger.info(f"delta_P : {delta_P}")
-                    self.logger.info(f"base_loss_lists : {base_loss_lists[dp_idx]}; taylor_loss_list : {taylor_loss_list}")
+                    # self.logger.info(f"base_loss_lists : {base_loss_lists[dp_idx]}; taylor_loss_list : {taylor_loss_list}")
 
                     predicted_label_id = np.argmin(taylor_loss_list)
                     predicted_label = test_data[i]["options"][predicted_label_id]
