@@ -95,16 +95,12 @@ class MetaICLData(object):
             text += self.print_tensorized_example(return_string=True)
         return ("="*50) + "\n" + text + "\n" + ("="*50)
 
-    def forward(self, gpt2, demonstrations, dp, task):
+    def forward(self, gpt2, metaicl_model, demonstrations, dp, task, return_loss = False):
         logger = logging.getLogger(__name__)
         device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
         tokenizer = self.tokenizer
 
-        add_newlines = False
-        checkpoint = None
-        metaicl_model = MetaICLModel(logger=logger, out_dir= "./cache", device_num=self.device)
-        metaicl_model.load(checkpoint, gpt2=gpt2)
-        
+        # print(metaicl_model)
         if "Llama" in gpt2:
             metaicl_model.resize(tokenizer)
 
@@ -139,31 +135,41 @@ class MetaICLData(object):
 
         label_id = np.argmin(one_trial_losses)
         label = dp["options"][label_id]
+        if return_loss:
+            return one_trial_losses
         return label_id, label
 
-    def evaluate_accuracy(self, gpt2, demonstrations, dev_data, task):
+    def evaluate_accuracy(self, gpt2, metaicl_model, demonstrations, dev_data, task):
         correct = 0; total = len(dev_data)
         input_str = ""
         for item in demonstrations:
             input_str = input_str + "Input: "+ item["input"] + " "+ "Label: "+item["output"]+"\n"
         input_token = self.tokenizer(input_str)["input_ids"]
         for idx, dp in enumerate(dev_data):
-            _, label = self.forward(gpt2, input_token, dp, task)
+            _, label = self.forward(gpt2, metaicl_model, input_token, dp, task)
             if label == dp["output"]: correct += 1
         return correct / total if total > 0 else 0
+
+    def evaluate_conditional(self, gpt2, model, demonstrations, dev_data, task):
+        pass
 
     def greedy_select_subset(self, gpt2, test_data, dev_data, subset_size=10):
         selected_indices, best_demonstrations = [], []
         best_demonstrations = []
-        
+
+        add_newlines = False
+        checkpoint = None
+        metaicl_model = MetaICLModel(logger=self.logger, out_dir= "./cache", device_num=self.device)
+        metaicl_model.load(checkpoint, gpt2=gpt2)
+
         while len(selected_indices) < subset_size:
             base_index = next(i for i in range(len(test_data)) if i not in selected_indices)
             best_candidate = base_index
-            best_accuracy = self.evaluate_accuracy(gpt2, best_demonstrations+[test_data[base_index]], dev_data, test_data[0]["task"])
+            best_accuracy = self.evaluate_accuracy(gpt2, metaicl_model, best_demonstrations+[test_data[base_index]], dev_data, test_data[0]["task"])
             for i in range(len(test_data)):
                 if (i in selected_indices) or i==base_index: continue
                 candidate_demonstrations = best_demonstrations + [test_data[i]]
-                candidate_accuracy = self.evaluate_accuracy(gpt2, candidate_demonstrations, dev_data, test_data[0]["task"])
+                candidate_accuracy = self.evaluate_accuracy(gpt2, metaicl_model, candidate_demonstrations, dev_data, test_data[0]["task"])
                 
                 self.logger.info(f"----------------candidate_accuracy : {candidate_accuracy}----------------")
                 if candidate_accuracy > best_accuracy:
