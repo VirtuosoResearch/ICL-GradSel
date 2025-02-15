@@ -103,7 +103,7 @@ class MetaICLData(object):
         # print(metaicl_model)
 
 
-        max_length_per_example, max_length = 128, 256
+        max_length_per_example, max_length = 128, 128
         if self.use_demonstrations:
             max_length = min(max_length * self.k, 512)
 
@@ -266,7 +266,7 @@ class MetaICLData(object):
     def compute_loss_and_gradient(self, gpt2, metaicl_model, tokenizer, input_tokens, output_tokens, device):
 
         tokenizer.pad_token = tokenizer.eos_token
-        input_ids = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=800).input_ids.to(device)
+        input_ids = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=600).input_ids.to(device)
         output_ids = tokenizer(output_tokens, return_tensors="pt")["input_ids"][0][-1].to(device)
 
         with torch.no_grad():
@@ -312,8 +312,8 @@ class MetaICLData(object):
 
     def compute_embedding_difference(self, gpt2, metaicl_model, base_str, candidate_str):
         device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
-        input_tokens_1 = self.tokenizer(base_str, return_tensors="pt", padding="max_length", truncation=True, max_length=800)["input_ids"].to(device)
-        input_tokens_2 = self.tokenizer(candidate_str, return_tensors="pt", padding="max_length", truncation=True, max_length=800)["input_ids"].to(device)
+        input_tokens_1 = self.tokenizer(base_str, return_tensors="pt", padding="max_length", truncation=True, max_length=600)["input_ids"].to(device)
+        input_tokens_2 = self.tokenizer(candidate_str, return_tensors="pt", padding="max_length", truncation=True, max_length=600)["input_ids"].to(device)
 
         tokenizer = self.tokenizer
 
@@ -1479,63 +1479,61 @@ class MetaICLData(object):
 
         return [test_data[i] for i in random_indices]
     
-    def tensorize_randomk(self, _test_data, options=None, add_newlines=True):
+    def tensorize_randomk(self, _test_data, _val_data, options=None, add_newlines=True):
         if options is not None:
             for i, dp in enumerate(_test_data):
+                print(i,dp)
                 assert "options" not in dp
                 assert type(dp) == str
                 _test_data[i] = {"input": dp, "options": options}
+            for i, dp in enumerate(_val_data):
+                assert "options" not in dp
+                assert type(dp) == str
+                _val_data[i] = {"input": dp, "options": options}
+        print("len(_test_data) : ",len(_test_data))
+        print("len(_val_data) : ", len(_val_data))
 
-        print(("-"*20))
-        print(f"len(_test_data): {len(_test_data)}")
-        train_data, test_data = [], []
-
+        val_data, test_data =  [], []
 
         for dp in _test_data:
             assert type(dp) == dict, ("Each example should be a dictionary", dp)
             assert "input" in dp and "options" in dp and type(dp["options"]) == list, \
                 ("Test example should contain input and options in a list format", dp)
             if "output" not in dp:
-                dp["output"] = dp["options"][0]  
+                dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
             test_data.append(dp.copy())
-
-        print("-"*20)
-        print(f"len(test_data) : {len(test_data)}")
-
-        if self.use_demonstrations:
-            test_texts = [dp["input"] + " " + dp["output"] for dp in test_data]
-            test_embeddings = [
-                self.tokenizer.encode(text, add_special_tokens=False) for text in test_texts
-            ]
-            print(len(test_embeddings[0]), len(test_embeddings[1]), len(test_embeddings[2]))
-            test_embeddings_pad=[]
-            max_length=self.max_length_per_example
-            for i,embedding in enumerate(test_embeddings):
-                if len(embedding) > max_length:
-                    test_embeddings_pad.append(embedding[:max_length])
-                else:
-                    test_embeddings_pad.append(embedding + [0] * (max_length - len(embedding)))
-            # train_embeddings = np.array(train_embeddings)
-            print(len(test_embeddings_pad[0]), len(test_embeddings_pad[1]), len(test_embeddings_pad[2]))
+        for dp in _val_data:
+            assert type(dp) == dict, ("Each example should be a dictionary", dp)
+            assert "input" in dp and "options" in dp and type(dp["options"]) == list, \
+                ("Test example should contain input and options in a list format", dp)
+            if "output" not in dp:
+                dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
+            val_data.append(dp.copy())
+        
+        task = _test_data[0]["task"]
+        test_features_path = f"./features/{task}_test_features.json"
+        with open(test_features_path, "r") as file:
+            test_features = json.load(file)
+        val_features_path = f"./features/{task}_val_features.json"
+        with open(val_features_path, "r") as file:
+            val_features = json.load(file)
 
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
 
-        # print("test_data : ",test_data)
-
-        for dp_idx, dp in enumerate(test_data):
+        for dp_idx, dp in enumerate(val_data):
             inputs, outputs, answer = self._prepro_each_datapoint(
                 dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
 
             if self.use_demonstrations:
-                test_text = dp["input"]
-                test_embedding = test_embeddings_pad[dp_idx]            
+                dp_feature = val_features[dp_idx]            
 
-                randomk_neighbors = self._select_random_k_neighbors(
-                    test_embedding, test_embeddings_pad, test_data, self.k, dp_idx
+                top_k_neighbors = self._select_random_k_neighbors(
+                    dp_feature, test_features, test_data, self.k, dp_idx
                 )
+
                 demonstrations = []
-                for i, neighbor_dp in enumerate(randomk_neighbors):
+                for i, neighbor_dp in enumerate(top_k_neighbors):
                     input_, output_ = self._prepro_each_datapoint(
                         neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
                     demonstrations += input_ + output_
