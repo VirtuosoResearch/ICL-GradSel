@@ -75,7 +75,8 @@ def main(logger, args):
     if args.use_demonstrations:
         orig_max_length = max_length
         if args.do_zeroshot:
-            max_length = min(max_length * args.k, 1024)
+            max_length = min(max_length_per_example * args.k, 1024)
+            # max_length = max_length * args.k
         else:
             max_length = min(max_length * args.k, 1024)
 
