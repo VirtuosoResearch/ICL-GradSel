@@ -1,0 +1,3 @@
+python graphqa.py --dataset graphqa_cycle --gpt2 meta-llama/Llama-3.2-1B --method direct --out_dir out/meta-llama-Llama-3.2-1B --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 100 --k 8 --topk
+
+python graphqa.py --dataset graphqa_cycle --gpt2 meta-llama/Llama-3.2-1B --method direct --out_dir out/meta-llama-Llama-3.2-1B --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 100 --k 8 --estim
