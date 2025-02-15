@@ -1472,10 +1472,15 @@ class MetaICLData(object):
         return " ".join(augmented_sentence)
 
     def _select_random_k_neighbors(self, test_sample_embedding, test_embeddings, test_data, k, dp_idx):
-        
-        length = len(test_data)
-        candidates = [i for i in range(length) if i!= dp_idx]
-        random_indices = random.sample(candidates, k)
+        similarities = []
+        for idx, dp in enumerate(test_embeddings):
+            if idx == len(test_data): break
+            if idx == dp_idx:
+                similarities.append(-1.0)
+                continue
+            similarity = 1 - cosine(test_sample_embedding, dp)
+            similarities.append(similarity)
+        random_indices = np.argsort(similarities)[:k][::-1]
 
         return [test_data[i] for i in random_indices]
     
