@@ -272,6 +272,7 @@ class MetaICLData(object):
         with torch.no_grad():
             if "gpt" in gpt2:
                 embedding = metaicl_model.model.transformer.wte(input_ids)
+            elif "opt" in gpt2: embedding = metaicl_model.model.model.decoder.embed_tokens(input_ids)
             else:
                 embedding = metaicl_model.model.model.embed_tokens(input_ids)
         embedding.requires_grad = True 
@@ -322,6 +323,9 @@ class MetaICLData(object):
             if "gpt" in gpt2:
                 embedding_1 = metaicl_model.model.transformer.wte(input_tokens_1)
                 embedding_2 = metaicl_model.model.transformer.wte(input_tokens_2)
+            elif "opt" in gpt2:
+                embedding_1 = metaicl_model.model.model.decoder.embed_tokens(input_tokens_1)
+                embedding_2 = metaicl_model.model.model.decoder.embed_tokens(input_tokens_2)
             else:
                 embedding_1 = metaicl_model.model.model.embed_tokens(input_tokens_1)
                 embedding_2 = metaicl_model.model.model.embed_tokens(input_tokens_2)
