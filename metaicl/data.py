@@ -246,18 +246,14 @@ class MetaICLData(object):
 
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
-
-        
-
         for dp_idx, dp in enumerate(val_data):
             inputs, outputs, answer = self._prepro_each_datapoint(
                 dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
-
             if self.use_demonstrations:
                 test_text = dp["input"]
                 dp_feature = val_features[dp_idx]
 
-                samples, top_indices, _ = self._select_top_k_neighbors(val_features[idx], test_features, test_data, k=50,dp_idx=-1)
+                samples, top_indices, _ = self._select_top_k_neighbors(dp_feature, test_features, test_data, k=50,dp_idx=-1)
 
                 ground, _ = self.greedy_select_condition(gpt2=gpt2, metaicl_model=metaicl_model,test_data=samples, dev_data=[dp], subset_size=self.k)
                 
