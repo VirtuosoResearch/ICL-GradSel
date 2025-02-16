@@ -111,6 +111,7 @@ def main(args):
     error_list = [] 
 
     for idx, dp in tqdm(enumerate(test_data[1:])):
+        if idx>=200: break
         option_losses = []
 
         for option in dp["options"]:
@@ -147,7 +148,7 @@ def main(args):
         if predicted_label == dp_label[idx]:
             correct_predictions += 1
 
-    total_samples = len(test_data) - 1 
+    total_samples = min(len(test_data) - 1 , 200)
 
     accuracy = correct_predictions / total_samples if total_samples > 0 else 0
     current_error = current_error / total_samples / len(test_data[0]["options"])
