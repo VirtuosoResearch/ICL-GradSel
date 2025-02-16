@@ -28,10 +28,16 @@ def main(args):
     model.eval()
     tokenizer.pad_token = tokenizer.eos_token
 
+
     test_data = load_data(None, "test", 3, seed=42, config_split="test",
                         datasets=[dataset_name], is_null=False)
 
     if len(test_data)>1000: test_data = test_data[:1000]
+
+    init = ""
+    for i in range(args.k):
+        init+="Input: " + test_data[i]["input"]+" Output: "+test_data[i]["output"]+"\n"
+
 
     anchor_dp = test_data[0]
 
@@ -39,7 +45,7 @@ def main(args):
     anchor_gradients = {}
 
     for option in anchor_dp["options"]:
-        input_tokens = "Input: " + anchor_dp["input"] + " Label:"
+        input_tokens =  init+"Input: " + anchor_dp["input"] + " Label:"
         
         tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=256).input_ids.to(device)
         tokens_output = tokenizer(option, return_tensors="pt").input_ids[0][-1].to(device)
@@ -68,7 +74,7 @@ def main(args):
     dp_loss, dp_gradients = {}, {}
     for dp in tqdm(test_data[1:]):
         for option in dp["options"]:
-            input_tokens = "Input: " + dp["input"] + " Label:"
+            input_tokens =init+ "Input: " + dp["input"] + " Label:"
             
             tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=256).input_ids.to(device)
             tokens_output = tokenizer(option, return_tensors="pt").input_ids[0][-1].to(device)
@@ -102,10 +108,11 @@ def main(args):
     error_list = [] 
 
     for idx, dp in tqdm(enumerate(test_data[1:])):
+        if idx>=200: break
         option_losses = []
 
         for option in dp["options"]:
-            input_tokens = "Input: " + dp["input"] + " Label:"
+            input_tokens = init+"Input: " + dp["input"] + " Label:"
 
             tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=256).input_ids.to(device)
 
@@ -138,7 +145,7 @@ def main(args):
         if predicted_label == dp_label[idx]:
             correct_predictions += 1
 
-    total_samples = len(test_data) - 1 
+    total_samples = min(len(test_data) - 1 , 200)
 
     accuracy = correct_predictions / total_samples if total_samples > 0 else 0
     current_error = current_error / total_samples / len(test_data[0]["options"])
@@ -156,5 +163,6 @@ if __name__=="__main__":
     parser.add_argument("--task", default="superglue-cb", type=str)
     parser.add_argument("--device", default=0, type=int)
     parser.add_argument("--model", default="meta-llama/Llama-3.2-1B", type=str)
+    parser.add_argument("--k", default=0, type=int)
     args = parser.parse_args()
     main(args)
