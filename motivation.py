@@ -6,6 +6,7 @@ from transformers import GPT2LMHeadModel, GPT2Tokenizer, OPTForCausalLM
 from utils.data import load_data
 from tqdm import tqdm
 import argparse
+import random
 
 # "meta-llama/Llama-3.2-1B"
 def main(args):
@@ -28,10 +29,18 @@ def main(args):
     model.eval()
     tokenizer.pad_token = tokenizer.eos_token
 
+
     test_data = load_data(None, "test", 3, seed=42, config_split="test",
                         datasets=[dataset_name], is_null=False)
 
     if len(test_data)>1000: test_data = test_data[:1000]
+
+    init = ""
+    random.seed(args.seed)
+    random_numbers = random.sample(range(len(test_data)), args.k)
+    for i in random_numbers:
+        init+="Input: " + test_data[i]["input"]+" Output: "+test_data[i]["output"]+"\n"
+
 
     anchor_dp = test_data[0]
 
@@ -39,9 +48,9 @@ def main(args):
     anchor_gradients = {}
 
     for option in anchor_dp["options"]:
-        input_tokens = "Input: " + anchor_dp["input"] + " Label:"
+        input_tokens =  init+"Input: " + anchor_dp["input"] + " Label:"
         
-        tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=256).input_ids.to(device)
+        tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=128*(args.k+1)).input_ids.to(device)
         tokens_output = tokenizer(option, return_tensors="pt").input_ids[0][-1].to(device)
 
         with torch.no_grad():
@@ -68,9 +77,9 @@ def main(args):
     dp_loss, dp_gradients = {}, {}
     for dp in tqdm(test_data[1:]):
         for option in dp["options"]:
-            input_tokens = "Input: " + dp["input"] + " Label:"
+            input_tokens =init+ "Input: " + dp["input"] + " Label:"
             
-            tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=256).input_ids.to(device)
+            tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=64*(args.k+1)).input_ids.to(device)
             tokens_output = tokenizer(option, return_tensors="pt").input_ids[0][-1].to(device)
 
             with torch.no_grad():
@@ -105,9 +114,9 @@ def main(args):
         option_losses = []
 
         for option in dp["options"]:
-            input_tokens = "Input: " + dp["input"] + " Label:"
+            input_tokens = init+"Input: " + dp["input"] + " Label:"
 
-            tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=256).input_ids.to(device)
+            tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=128*(args.k+1)).input_ids.to(device)
 
             with torch.no_grad():
                 if "gpt2" in model_name: 
@@ -156,5 +165,7 @@ if __name__=="__main__":
     parser.add_argument("--task", default="superglue-cb", type=str)
     parser.add_argument("--device", default=0, type=int)
     parser.add_argument("--model", default="meta-llama/Llama-3.2-1B", type=str)
+    parser.add_argument("--k", default=0, type=int)
+    parser.add_argument("--seed", default=0, type=int)
     args = parser.parse_args()
     main(args)
