@@ -172,7 +172,7 @@ class MetaICLData(object):
                 candidate_loss = self.evaluate_loss(gpt2, metaicl_model, candidate_demonstrations, dev_data, test_data[0]["task"])
                 
                 self.logger.info(f"----------------candidate_loss : {candidate_loss}----------------")
-                if candidate_loss > best_loss:
+                if candidate_loss < best_loss:
                     best_candidate = i
                     best_loss = candidate_loss
 
@@ -231,8 +231,6 @@ class MetaICLData(object):
             test_data.append(dp.copy())
         for idx, dp in enumerate(_val_data):
             if "output" not in dp: dp["output"] = dp["options"][0]
-            if idx<= len(_val_data)//2: val_data.append(dp.copy())
-            else: dev_data.append(dp.copy())
         task = _test_data[0]["task"]
         with open(f"./features/{task}_test_features.json", "r") as file: test_features = json.load(file)
         with open(f"./features/{task}_val_features.json", "r") as file: val_features = json.load(file)
@@ -246,16 +244,16 @@ class MetaICLData(object):
 
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
-        for dp_idx, dp in enumerate(val_data):
+        for dp_idx, dp in tqdm(enumerate(val_data), total=len(val_data), leave=True, position=0):
             inputs, outputs, answer = self._prepro_each_datapoint(
                 dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
             if self.use_demonstrations:
                 test_text = dp["input"]
                 dp_feature = val_features[dp_idx]
 
-                samples, top_indices, _ = self._select_top_k_neighbors(dp_feature, test_features, test_data, k=50,dp_idx=-1)
+                samples, top_indices, _ = self._select_top_k_neighbors(dp_feature, test_features, test_data, k=4,dp_idx=-1)
 
-                ground, _ = self.greedy_select_condition(gpt2=gpt2, metaicl_model=metaicl_model,test_data=samples, dev_data=[dp], subset_size=self.k)
+                ground, _ = self.greedy_select_condition(gpt2=gpt2, metaicl_model=metaicl_model,test_data=samples, dev_data=dev_data, subset_size=self.k)
                 
                 # def greedy_select_subset(self, test_data, dp_data, subset_size=10):
                 demonstrations = []
@@ -1497,15 +1495,18 @@ class MetaICLData(object):
         return " ".join(augmented_sentence)
 
     def _select_random_k_neighbors(self, test_sample_embedding, test_embeddings, test_data, k, dp_idx):
-        similarities = []
-        for idx, dp in enumerate(test_embeddings):
-            if idx == len(test_data): break
-            if idx == dp_idx:
-                similarities.append(-1.0)
-                continue
-            similarity = 1 - cosine(test_sample_embedding, dp)
-            similarities.append(similarity)
-        random_indices = np.argsort(similarities)[:k][::-1]
+        # similarities = []
+        # for idx, dp in enumerate(test_embeddings):
+        #     if idx == len(test_data): break
+        #     if idx == dp_idx:
+        #         similarities.append(-1.0)
+        #         continue
+        #     similarity = 1 - cosine(test_sample_embedding, dp)
+        #     similarities.append(similarity)
+        # random_indices = np.argsort(similarities)[:k][::-1]
+        length = len(test_data)
+        candidates = [i for i in range(length) if i!= dp_idx]
+        random_indices = random.sample(candidates, k)
 
         return [test_data[i] for i in random_indices]
     
