@@ -13,7 +13,7 @@ def main(args):
     dataset_name = args.task
     model_name = args.model
     device = torch.device(f"cuda:{args.device}" if torch.cuda.is_available() else "cpu")
-
+    device = "cpu"
     if "gpt2" in model_name:
         tokenizer = GPT2Tokenizer.from_pretrained(model_name)
         model = GPT2LMHeadModel.from_pretrained(model_name)
@@ -28,7 +28,7 @@ def main(args):
 
     model.eval()
     tokenizer.pad_token = tokenizer.eos_token
-
+    model.resize_token_embeddings(len(tokenizer))
 
     test_data = load_data(None, "test", 3, seed=42, config_split="test",
                         datasets=[dataset_name], is_null=False)
@@ -62,6 +62,10 @@ def main(args):
 
         embedding_input.requires_grad = True
 
+        print(f"embedding_input shape: {embedding_input.shape}")
+        print(f"Max index in inputs_embeds: {embedding_input.max()}")
+
+        embedding_input = embedding_input.to(torch.float32)  
         output_logits = model(inputs_embeds=embedding_input).logits
         last_token_idx = tokens_input.shape[1] - 1
         log_probs = F.log_softmax(output_logits[0, last_token_idx, :], dim=-1)
