@@ -13,7 +13,7 @@ def main(args):
     dataset_name = args.task
     model_name = args.model
     device = torch.device(f"cuda:{args.device}" if torch.cuda.is_available() else "cpu")
-    device = "cpu"
+    # device = "cpu"
     if "gpt2" in model_name:
         tokenizer = GPT2Tokenizer.from_pretrained(model_name)
         model = GPT2LMHeadModel.from_pretrained(model_name)
@@ -22,9 +22,9 @@ def main(args):
         model = OPTForCausalLM.from_pretrained(model_name)
     else:
         tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model = AutoModelForCausalLM.from_pretrained(model_name)
+        model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16)
 
-    model=model.to(device)
+    model=model.to(device, dtype=torch.bfloat16)
 
     model.eval()
     tokenizer.pad_token = tokenizer.eos_token
@@ -50,8 +50,11 @@ def main(args):
     for option in anchor_dp["options"]:
         input_tokens =  init+"Input: " + anchor_dp["input"] + " Label:"
         
-        tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=128*(args.k+1)).input_ids.to(device)
+        tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=100*(args.k+1)).input_ids.to(device)
         tokens_output = tokenizer(option, return_tensors="pt").input_ids[0][-1].to(device)
+
+        # last_token_idx = tokens_input.ne(tokenizer.pad_token_id).sum(dim=1) - 1
+        # print("last_token_idx : ", last_token_idx)
 
         with torch.no_grad():
             if "gpt2" in model_name: embedding_input = model.transformer.wte(tokens_input)
@@ -83,8 +86,11 @@ def main(args):
         for option in dp["options"]:
             input_tokens =init+ "Input: " + dp["input"] + " Label:"
             
-            tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=64*(args.k+1)).input_ids.to(device)
+            tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=100*(args.k+1)).input_ids.to(device)
             tokens_output = tokenizer(option, return_tensors="pt").input_ids[0][-1].to(device)
+
+            # last_token_idx = tokens_input.ne(tokenizer.pad_token_id).sum(dim=1) - 1
+            # print("last_token_idx : ", last_token_idx)
 
             with torch.no_grad():
                 if "gpt2" in model_name: embedding_input = model.transformer.wte(tokens_input)
@@ -115,13 +121,12 @@ def main(args):
     error_list = [] 
 
     for idx, dp in tqdm(enumerate(test_data[1:])):
-        if idx>=200: break
         option_losses = []
 
         for option in dp["options"]:
             input_tokens = init+"Input: " + dp["input"] + " Label:"
 
-            tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=128*(args.k+1)).input_ids.to(device)
+            tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=100*(args.k+1)).input_ids.to(device)
 
             with torch.no_grad():
                 if "gpt2" in model_name: 
@@ -152,7 +157,7 @@ def main(args):
         if predicted_label == dp_label[idx]:
             correct_predictions += 1
 
-    total_samples = min(len(test_data) - 1 , 200)
+    total_samples = len(test_data) - 1
 
     accuracy = correct_predictions / total_samples if total_samples > 0 else 0
     current_error = current_error / total_samples / len(test_data[0]["options"])
