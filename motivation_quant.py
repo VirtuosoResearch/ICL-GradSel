@@ -15,15 +15,15 @@ def main(args):
     model_name = args.model
     device = torch.device(f"cuda:{args.device}" if torch.cuda.is_available() else "cpu")
     # device = "cpu"
-    if "gpt2" in model_name:
-        tokenizer = GPT2Tokenizer.from_pretrained(model_name)
-        model = GPT2LMHeadModel.from_pretrained(model_name)
-    elif "opt" in model_name:
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model = OPTForCausalLM.from_pretrained(model_name)
-    else:
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16)
+    # if "gpt2" in model_name:
+    #     tokenizer = GPT2Tokenizer.from_pretrained(model_name)
+    #     model = GPT2LMHeadModel.from_pretrained(model_name)
+    # elif "opt" in model_name:
+    #     tokenizer = AutoTokenizer.from_pretrained(model_name)
+    #     model = OPTForCausalLM.from_pretrained(model_name)
+    # else:
+    #     tokenizer = AutoTokenizer.from_pretrained(model_name)
+    #     model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16)
 
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
@@ -35,9 +35,9 @@ def main(args):
     model = AutoModelForCausalLM.from_pretrained(
         model_name, 
         quantization_config=bnb_config,
-        device_map="auto" 
+        device_map= {"": 0}
     )
-
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
     model=model.to(device)
 
     model.eval()
@@ -64,7 +64,7 @@ def main(args):
     for option in anchor_dp["options"]:
         input_tokens =  init+"Input: " + anchor_dp["input"] + " Label:"
         
-        tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=80*(args.k+1)).input_ids.to(device)
+        tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=args.max_length*(args.k+1)).input_ids.to(device)
         tokens_output = tokenizer(option, return_tensors="pt").input_ids[0][-1].to(device)
 
         # last_token_idx = tokens_input.ne(tokenizer.pad_token_id).sum(dim=1) - 1
@@ -100,7 +100,7 @@ def main(args):
         for option in dp["options"]:
             input_tokens =init+ "Input: " + dp["input"] + " Label:"
             
-            tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=80*(args.k+1)).input_ids.to(device)
+            tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=args.max_length*(args.k+1)).input_ids.to(device)
             tokens_output = tokenizer(option, return_tensors="pt").input_ids[0][-1].to(device)
 
             # last_token_idx = tokens_input.ne(tokenizer.pad_token_id).sum(dim=1) - 1
@@ -141,7 +141,7 @@ def main(args):
         for option in dp["options"]:
             input_tokens = init+"Input: " + dp["input"] + " Label:"
 
-            tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=80*(args.k+1)).input_ids.to(device)
+            tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=args.max_length*(args.k+1)).input_ids.to(device)
 
             with torch.no_grad():
                 if "gpt2" in model_name: 
@@ -189,7 +189,8 @@ if __name__=="__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--task", default="superglue-cb", type=str)
     parser.add_argument("--device", default=0, type=int)
-    parser.add_argument("--model", default="meta-llama/Llama-3.2-1B", type=str)
+    parser.add_argument("--max_length", default=128, type=int)
+    parser.add_argument("--model", default="meta-llama/Llama-2-13b-hf", type=str)
     parser.add_argument("--k", default=0, type=int)
     parser.add_argument("--seed", default=0, type=int)
     args = parser.parse_args()
