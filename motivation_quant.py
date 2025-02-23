@@ -7,6 +7,7 @@ from utils.data import load_data
 from tqdm import tqdm
 import argparse
 import random
+from transformers import BitsAndBytesConfig
 
 # "meta-llama/Llama-3.2-1B"
 def main(args):
@@ -24,7 +25,20 @@ def main(args):
         tokenizer = AutoTokenizer.from_pretrained(model_name)
         model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16)
 
-    model=model.to(device, dtype=torch.bfloat16)
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_quant_type="nf4",
+        llm_int8_threshold=6.0
+    )
+
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name, 
+        quantization_config=bnb_config,
+        device_map="auto" 
+    )
+
+    model=model.to(device)
 
     model.eval()
     tokenizer.pad_token = tokenizer.eos_token
@@ -50,7 +64,7 @@ def main(args):
     for option in anchor_dp["options"]:
         input_tokens =  init+"Input: " + anchor_dp["input"] + " Label:"
         
-        tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=100*(args.k+1)).input_ids.to(device)
+        tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=80*(args.k+1)).input_ids.to(device)
         tokens_output = tokenizer(option, return_tensors="pt").input_ids[0][-1].to(device)
 
         # last_token_idx = tokens_input.ne(tokenizer.pad_token_id).sum(dim=1) - 1
@@ -68,7 +82,7 @@ def main(args):
         print(f"embedding_input shape: {embedding_input.shape}")
         print(f"Max index in inputs_embeds: {embedding_input.max()}")
 
-        embedding_input = embedding_input.to(torch.float32)  
+        embedding_input = embedding_input.to(model.dtype)  
         output_logits = model(inputs_embeds=embedding_input).logits
         last_token_idx = tokens_input.shape[1] - 1
         log_probs = F.log_softmax(output_logits[0, last_token_idx, :], dim=-1)
@@ -86,7 +100,7 @@ def main(args):
         for option in dp["options"]:
             input_tokens =init+ "Input: " + dp["input"] + " Label:"
             
-            tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=100*(args.k+1)).input_ids.to(device)
+            tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=80*(args.k+1)).input_ids.to(device)
             tokens_output = tokenizer(option, return_tensors="pt").input_ids[0][-1].to(device)
 
             # last_token_idx = tokens_input.ne(tokenizer.pad_token_id).sum(dim=1) - 1
@@ -97,6 +111,7 @@ def main(args):
                 elif "opt" in model_name: embedding_input = model.model.decoder.embed_tokens(tokens_input)
                 else: embedding_input = model.model.embed_tokens(tokens_input)
             
+            embedding_input = embedding_input.to(model.dtype)
             embedding_input.requires_grad = True
 
             output_logits = model(inputs_embeds=embedding_input).logits
@@ -126,7 +141,7 @@ def main(args):
         for option in dp["options"]:
             input_tokens = init+"Input: " + dp["input"] + " Label:"
 
-            tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=100*(args.k+1)).input_ids.to(device)
+            tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=80*(args.k+1)).input_ids.to(device)
 
             with torch.no_grad():
                 if "gpt2" in model_name: 
@@ -164,7 +179,6 @@ def main(args):
 
     error_variance = np.var(error_list) if error_list else 0
 
-    print("len(test_data[0][\"options\"]) : ",len(test_data[0]["options"]))
     print("error : ", current_error)
     print("error variance : ", error_variance)
     print("accuracy : ", accuracy)
