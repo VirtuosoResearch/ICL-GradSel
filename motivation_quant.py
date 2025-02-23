@@ -26,16 +26,16 @@ def main(args):
         model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16)
 
     bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,   # 4-bit 量化
-        bnb_4bit_compute_dtype=torch.bfloat16,  # 计算用 bfloat16，减少显存
-        bnb_4bit_quant_type="nf4",  # `nf4` 量化，效果更好
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_quant_type="nf4",
         llm_int8_threshold=6.0
     )
 
     model = AutoModelForCausalLM.from_pretrained(
         model_name, 
         quantization_config=bnb_config,
-        device_map="auto"  # 自动分配显存
+        device_map="auto" 
     )
 
     model=model.to(device)
