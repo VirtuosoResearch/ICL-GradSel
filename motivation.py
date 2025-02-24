@@ -164,6 +164,7 @@ def main(args):
 
     error_variance = np.var(error_list) if error_list else 0
 
+    print("len(test_data[0][\"options\"]) : ",len(test_data[0]["options"]))
     print("error : ", current_error)
     print("error variance : ", error_variance)
     print("accuracy : ", accuracy)
