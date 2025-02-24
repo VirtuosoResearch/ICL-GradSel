@@ -171,7 +171,7 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
     elif args.forsel:
         metaicl_data.tensorize_forsel(test_data, val_data, args.m, args.seed, options=None, add_newlines=add_newlines)
     elif args.estim:
-        metaicl_data.tensorize_estimate(args.gpt2, test_data, val_data, options=None,  add_newlines=add_newlines)
+        metaicl_data.tensorize_estimate(args.gpt2, test_data, val_data, args.is_quant, options=None,  add_newlines=add_newlines)
 
     metaicl_data.print_tensorized_example()
     logger.info(cache_path)
@@ -185,7 +185,7 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
     #         losses = pkl.load(f)
     # else:
     if metaicl_model.is_none():
-        metaicl_model.load(checkpoint, gpt2=args.gpt2)
+        metaicl_model.load(checkpoint, gpt2=args.gpt2, is_quant=args.is_quant)
         metaicl_model.cuda()
         metaicl_model.eval()
 
@@ -265,6 +265,7 @@ if __name__=='__main__':
     parser.add_argument("--estim", default=False, action="store_true")
     parser.add_argument("--m", type=int, default=4)
     parser.add_argument("--device", type=int, default=0)
+    parser.add_argument("--is_quant", default=False, action="store_true")
     args = parser.parse_args()
 
     handlers = [logging.StreamHandler()]

@@ -121,7 +121,7 @@ class MetaICLData(object):
         option_tokens = [tokenizer(option)["input_ids"] for option in dp['options']]
         input_tokens = tokenizer("Input: " + dp["input"] + " " + "Label:")["input_ids"]
         metaicl_model.model.eval()
-        metaicl_model.model.to(device)
+        # metaicl_model.model.to(device)
 
         one_trial_losses = []
         for option_token in option_tokens:
@@ -295,6 +295,7 @@ class MetaICLData(object):
             else:
                 embedding = metaicl_model.model.model.embed_tokens(input_ids)
         embedding.requires_grad = True 
+        embedding = embedding.to(metaicl_model.model.dtype)
 
         output_logits = metaicl_model.model(inputs_embeds=embedding).logits
         last_token_idx = input_ids.shape[1] - 1 
@@ -348,6 +349,9 @@ class MetaICLData(object):
             else:
                 embedding_1 = metaicl_model.model.model.embed_tokens(input_tokens_1)
                 embedding_2 = metaicl_model.model.model.embed_tokens(input_tokens_2)
+        
+        embedding_1 = embedding_1.to(metaicl_model.model.dtype)
+        embedding_2 = embedding_2.to(metaicl_model.model.dtype)
 
         delta_P = embedding_2 - embedding_1.detach()
 
@@ -359,6 +363,7 @@ class MetaICLData(object):
         best_input_str = ""
         best_accuracy = 0.0
         device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
+
 
         while len(selected_indices) < self.k:
             
@@ -433,7 +438,7 @@ class MetaICLData(object):
         top_k_indices = np.argsort(similarities)[-k:][::-1]
         return [test_data[i] for i in top_k_indices], top_k_indices , similarities
     
-    def tensorize_estimate(self, gpt2, _test_data, _val_data, options=None, add_newlines=True):
+    def tensorize_estimate(self, gpt2, _test_data, _val_data, is_quant, options=None, add_newlines=True):
         print("options: ", options)
         if options is not None:
             print("len(_test_data) : ", len(_test_data))
@@ -461,15 +466,17 @@ class MetaICLData(object):
         add_newlines = False
         checkpoint = None
         metaicl_model = MetaICLModel(logger=self.logger, out_dir= "./cache", device_num=self.device)
-        if "gpt2" in gpt2:
-            metaicl_model.model = GPT2LMHeadModel.from_pretrained(gpt2)
-        elif "opt" in gpt2:
-            metaicl_model.model = OPTForCausalLM.from_pretrained(gpt2)
-        else:
-            metaicl_model.model = AutoModelForCausalLM.from_pretrained(gpt2)
-        metaicl_model.model = metaicl_model.model.to(self.device)  
+        # print(f"-------------- gpt2: {gpt2} ------------")
+        metaicl_model.load(gpt2=gpt2,is_quant=is_quant)
+        # if "gpt2" in gpt2:
+        #     metaicl_model.model = GPT2LMHeadModel.from_pretrained(gpt2)
+        # elif "opt" in gpt2:
+        #     metaicl_model.model = OPTForCausalLM.from_pretrained(gpt2)
+        # else:
+        #     metaicl_model.model = AutoModelForCausalLM.from_pretrained(gpt2)
+        # metaicl_model.model = metaicl_model.model.to(self.device)  
         print("gpt2 : ",gpt2)
-        print("type(metaicl_model) : ",type(metaicl_model))
+        print("origin type(metaicl_model) : ",type(metaicl_model.model))
         if "Llama" in gpt2:
             metaicl_model.resize(self.tokenizer)
 
