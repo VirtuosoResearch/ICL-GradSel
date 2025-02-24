@@ -12,6 +12,7 @@ import torch.nn.functional as F
 from tqdm import tqdm
 from transformers import Adafactor, AdamW, get_linear_schedule_with_warmup
 from transformers import AutoModelForCausalLM
+from transformers import BitsAndBytesConfig
 
 from utils.utils import get_checkpoint_id, download_file
 
@@ -81,18 +82,31 @@ class MetaICLModel(object):
         self.model.resize_token_embeddings(len(tokenizer))
 
 
-    def load(self, checkpoint=None, gpt2="gpt2-large"):
+    def load(self, checkpoint=None, gpt2="gpt2-large", is_quant=False):
         '''
         checkpoint can be either keyword of the model or path to the checkpoint file
         '''
         if checkpoint is not None and checkpoint.startswith("gpt"):
             gpt2 = checkpoint
             checkpoint = None
-        if checkpoint is None and "gpt" not in gpt2:
-            checkpoint = gpt2
-            gpt2 = "gpt2-large"
-            
-        if gpt2.startswith("gpt2"):
+        # if checkpoint is None and "gpt" not in gpt2:
+        #     checkpoint = gpt2
+        #     gpt2 = "gpt2-large"
+        
+        if is_quant:
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_quant_type="nf4",
+                llm_int8_threshold=6.0
+            )
+
+            model = AutoModelForCausalLM.from_pretrained(
+                gpt2, 
+                quantization_config=bnb_config,
+                device_map= {"": self.device}
+            )
+        elif gpt2.startswith("gpt2"):
             model = AutoModelForCausalLM.from_pretrained(gpt2)
         elif "gpt-j" in gpt2:
             model = AutoModelForCausalLM.from_pretrained("EleutherAI/gpt-j-6b") #/gpt2)
@@ -102,11 +116,10 @@ class MetaICLModel(object):
             raise NotImplementedError(checkpoint)
         self.model_name = gpt2
 
-        # model.to_device(self.device)
         self.model = model
-        # print("self.device : ", self.device)
-        self.model.to(self.device)
-        
+        if is_quant != True:
+            self.model.to(self.device)
+
 
     def save(self, step):
         if self.local_rank <= 0:
@@ -159,10 +172,13 @@ class MetaICLModel(object):
         assert len(losses)==len(data)
         predictions = []
         for idx, dp in enumerate(data.metadata):
+            # print("---------------------------------------")
+            # print(dp)
             curr_label_losses = [np.sum(losses[indices]) for indices in dp["indices"]]
             prediction_idx = sorted(enumerate(curr_label_losses), key=lambda x: x[1])[0][0]
             prediction = dp["options"][prediction_idx]
             predictions.append(prediction.strip())
+        # print("len(data.metadata) : ",len(data.metadata))
         return predictions
 
     def run_model(self, input_ids, attention_mask, token_type_ids, labels=None):
