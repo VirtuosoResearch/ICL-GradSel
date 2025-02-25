@@ -89,9 +89,6 @@ class MetaICLModel(object):
         if checkpoint is not None and checkpoint.startswith("gpt"):
             gpt2 = checkpoint
             checkpoint = None
-        # if checkpoint is None and "gpt" not in gpt2:
-        #     checkpoint = gpt2
-        #     gpt2 = "gpt2-large"
         
         if is_quant:
             bnb_config = BitsAndBytesConfig(
@@ -128,15 +125,6 @@ class MetaICLModel(object):
             torch.save(model_state_dict, os.path.join(self.out_dir, "model-{}.pt".format(step)))
             self.logger.info("Saving model parameters at step=%d" % step)
 
-    def parallel(self):
-        if self.n_gpu > 1:
-            self.model = torch.nn.DataParallel(self.model)
-
-        if self.local_rank != -1:
-            self.model = torch.nn.parallel.DistributedDataParallel(
-                self.model, device_ids=[self.local_rank], output_device=self.local_rank)
-
-
     def do_inference(self, data, batch_size=1, verbose=False):
         dataloader = data.get_dataloader(batch_size, is_training=False)
         # self.logger.info(f"len(dataloader) : {len(dataloader)}")
@@ -149,13 +137,6 @@ class MetaICLModel(object):
                 labels=None
             else:
                 labels=batch[3].cuda()
-            # print("111input_ids.shape:", input_ids.shape)
-            # print("111attention_mask.shape:", attention_mask.shape)
-            # print("111token_type_ids.shape:", token_type_ids.shape)
-            # max_index = input_ids.max().item()
-            # min_index = input_ids.min().item()
-            # print(f"max_index : {max_index} min_index : {min_index}")
-            # assert max_index < vocab_size, f"Index {max_index} out of vocab size {vocab_size}"
             input_ids = input_ids.to(self.device)
             attention_mask = attention_mask.to(self.device)
             token_type_ids = token_type_ids.to(self.device)
@@ -182,9 +163,6 @@ class MetaICLModel(object):
         return predictions
 
     def run_model(self, input_ids, attention_mask, token_type_ids, labels=None):
-        # print("input_ids.shape:", input_ids.shape)
-        # print("attention_mask.shape:", attention_mask.shape)
-        # print("token_type_ids.shape:", token_type_ids.shape)
         outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
         logits = outputs.logits[..., :-1, :].contiguous()
 
