@@ -102,11 +102,11 @@ class MetaICLData(object):
 
         max_length_per_example, max_length = 128, 128
         if self.use_demonstrations:
-            max_length = min(max_length * self.k, 512)
+            max_length = min(max_length * self.k, 1024)
 
         def run_a_forward_pass(input_tokens, output_tokens, tokenizer):
             encoded = prepro_sentence_pair_single(
-                        input_tokens, output_tokens, max_length=512, bos_token_id=tokenizer.bos_token_id, eos_token_id=tokenizer.eos_token_id,
+                        input_tokens, output_tokens, max_length=1024, bos_token_id=tokenizer.bos_token_id, eos_token_id=tokenizer.eos_token_id,
                         allow_truncation=self.use_demonstrations
                 )
             input_ids = torch.LongTensor([encoded[0]])
@@ -438,7 +438,7 @@ class MetaICLData(object):
         top_k_indices = np.argsort(similarities)[-k:][::-1]
         return [test_data[i] for i in top_k_indices], top_k_indices , similarities
     
-    def tensorize_estimate(self, gpt2, _test_data, _val_data, is_quant, options=None, add_newlines=True):
+    def tensorize_estimate(self, gpt2, _test_data, _val_data, is_quant, pseudo_k, options=None, add_newlines=True):
         print("options: ", options)
         if options is not None:
             print("len(_test_data) : ", len(_test_data))
@@ -468,26 +468,27 @@ class MetaICLData(object):
         metaicl_model = MetaICLModel(logger=self.logger, out_dir= "./cache", device_num=self.device)
         # print(f"-------------- gpt2: {gpt2} ------------")
         metaicl_model.load(gpt2=gpt2,is_quant=is_quant)
-        # if "gpt2" in gpt2:
-        #     metaicl_model.model = GPT2LMHeadModel.from_pretrained(gpt2)
-        # elif "opt" in gpt2:
-        #     metaicl_model.model = OPTForCausalLM.from_pretrained(gpt2)
-        # else:
-        #     metaicl_model.model = AutoModelForCausalLM.from_pretrained(gpt2)
-        # metaicl_model.model = metaicl_model.model.to(self.device)  
+
         print("gpt2 : ",gpt2)
         print("origin type(metaicl_model) : ",type(metaicl_model.model))
         if "Llama" in gpt2:
             metaicl_model.resize(self.tokenizer)
 
-        for idx,dp in tqdm(enumerate(unlabeled_data), total=len(unlabeled_data), leave=True, position=0):
-            samples, top_indices, _ = self._select_top_k_neighbors(val_features[idx], test_features, test_data, k=3,dp_idx=-1)
-            demonstration=[]
-            for dk in samples:
-                demonstration+=self.tokenizer("Input: " + dk["input"] + " " + "Label: "+dk["output"])["input_ids"]
-            _, dp["output"]= self.forward(gpt2, metaicl_model, demonstration, dp, dp["task"])
-            psudo_data.append(dp)
+        correct = 0     
+        if pseudo_k<=10:   
+            for idx,dp in tqdm(enumerate(unlabeled_data), total=len(unlabeled_data), leave=True, position=0):
+                samples, top_indices, _ = self._select_top_k_neighbors(val_features[idx], test_features, test_data, k=pseudo_k,dp_idx=-1)
+                demonstration=[]
 
+                zt_output = dp["output"]
+
+                for dk in samples:
+                    demonstration+=self.tokenizer("Input: " + dk["input"] + " " + "Label: "+dk["output"])["input_ids"]
+                _, dp["output"]= self.forward(gpt2, metaicl_model, demonstration, dp, dp["task"])
+                correct +=(zt_output==dp["output"])
+
+                psudo_data.append(dp)
+            self.logger.info(f"ZT_Accuracy = {float(correct/(len(unlabeled_data)))}")
         # psudo_data = val_data.copy()
 
         input_ids, attention_mask, token_type_ids = [], [], []
