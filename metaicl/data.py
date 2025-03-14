@@ -714,30 +714,30 @@ class MetaICLData(object):
                         dp["input"] = "\n" + dp["input"]
             else:
                 raise NotImplementedError()
-        else:
-            if not is_first:
-                if self.method=="direct":
-                    dp["input"] = " " + dp["input"]
-                elif self.method=="channel":
-                    dp["output"] = " " + dp["output"]
-                    if "options" in dp:
-                        dp["options"] = [" "+opt for opt in dp["options"]]
-                else:
-                    raise NotImplementedError()
-            if self.method=="direct":
-                dp["output"] = " " + dp["output"]
-                if "options" in dp:
-                    dp["options"] = [" " + opt for opt in dp["options"]]
-            elif self.method=="channel":
-                dp["input"] = " " + dp["input"]
-            else:
-                raise NotImplementedError()
+        # else:
+        #     print("2222222222222")
+        #     if not is_first:
+        #         if self.method=="direct":
+        #             dp["input"] = " " + dp["input"]
+        #         elif self.method=="channel":
+        #             dp["output"] = " " + dp["output"]
+        #             if "options" in dp:
+        #                 dp["options"] = [" "+opt for opt in dp["options"]]
+        #         else:
+        #             raise NotImplementedError()
+        #     if self.method=="direct":
+        #         dp["output"] = " " + dp["output"]
+        #         if "options" in dp:
+        #             dp["options"] = [" " + opt for opt in dp["options"]]
+        #     elif self.method=="channel":
+        #         dp["input"] = " " + dp["input"]
+        #     else:
+        #         raise NotImplementedError()
 
         input_tokens = self.tokenizer(dp["input"])["input_ids"]
 
         if is_training or for_demonstrations:
             output_tokens = self.tokenizer(dp["output"])["input_ids"]
-
             if "task" in dp:
                 if (dp["task"].startswith("inst:piqa") or dp["task"].startswith("inst:yahoo_answers_topics")) and \
                         len(input_tokens)+len(output_tokens)+2>self.max_length_per_example:
@@ -827,9 +827,10 @@ class MetaICLData(object):
         metadata = []
 
         for dp_idx, dp in enumerate(val_data):
+            # print("dp : ",dp)
             inputs, outputs, answer = self._prepro_each_datapoint(
                 dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
-
+            # print("*********** seperate ***********")
             if self.use_demonstrations:
                 dp_feature = val_features[dp_idx]            
 
@@ -844,6 +845,10 @@ class MetaICLData(object):
                     demonstrations += input_ + output_
 
             indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
+            # print("indices : ",indices)
+            # print("inputs : ",inputs)
+            # print("answer : ",answer)
+            # print("demonstrations : ",demonstrations)
 
             metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
 
