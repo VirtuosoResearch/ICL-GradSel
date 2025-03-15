@@ -247,7 +247,7 @@ if __name__=='__main__':
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--use_random_english_words", default=False, action="store_true")
 
-    parser.add_argument("--out_dir", type=str, required=True)
+    parser.add_argument("--out_dir", type=str, required=True, default="out/gpt2-large")
 
     parser.add_argument("--split", type=str, default="test")
     parser.add_argument("--is_null", default=False, action="store_true")
