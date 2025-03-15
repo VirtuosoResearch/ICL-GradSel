@@ -468,7 +468,7 @@ class MetaICLData(object):
         add_newlines = False
         checkpoint = None
         metaicl_model = MetaICLModel(logger=self.logger, out_dir= "./cache", device_num=self.device)
-        # print(f"-------------- gpt2: {gpt2} ------------")
+        print(f"-------------- gpt2: {gpt2} ------------")
         metaicl_model.load(gpt2=gpt2,is_quant=is_quant)
 
         print("gpt2 : ",gpt2)
