@@ -171,7 +171,7 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
     elif args.forsel:
         metaicl_data.tensorize_forsel(test_data, val_data, args.m, args.seed, options=None, add_newlines=add_newlines)
     elif args.estim:
-        metaicl_data.tensorize_estimate(args.gpt2, test_data, val_data, args.is_quant, args.pseudo_k, options=None, add_newlines=add_newlines)
+        metaicl_data.tensorize_estimate(args.gpt2, test_data, val_data, args.is_quant,pseudo_k=args.pseudo_k, options=None,  add_newlines=add_newlines)
 
     metaicl_data.print_tensorized_example()
     logger.info(cache_path)
@@ -247,7 +247,7 @@ if __name__=='__main__':
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--use_random_english_words", default=False, action="store_true")
 
-    parser.add_argument("--out_dir", type=str, required=True)
+    parser.add_argument("--out_dir", type=str, required=True, default="out/gpt2-large")
 
     parser.add_argument("--split", type=str, default="test")
     parser.add_argument("--is_null", default=False, action="store_true")
@@ -266,7 +266,7 @@ if __name__=='__main__':
     parser.add_argument("--m", type=int, default=4)
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--is_quant", default=False, action="store_true")
-    parser.add_argument("--pseudo_k", type=int, default=3)
+    parser.add_argument("--pseudo_k", default=3, type=int)
     args = parser.parse_args()
 
     handlers = [logging.StreamHandler()]
