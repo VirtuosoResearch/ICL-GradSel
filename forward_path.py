@@ -47,10 +47,13 @@ class Forward():
             }
             tokenizer.add_special_tokens(special_tokens)
 
+
         add_newlines = not self.gpt2.startswith("gpt2")
         checkpoint = None
         metaicl_model = MetaICLModel(logger=logger, out_dir= self.out_dir, device_num=self.device)
+
         metaicl_model.load(checkpoint, gpt2=self.gpt2)
+        metaicl_model.resize(tokenizer)
 
         max_length_per_example, max_length = 128, 256
         if self.use_demonstrations:
@@ -86,6 +89,7 @@ class Forward():
             input_ids = input_ids.to(device)
             attention_mask = attention_mask.to(device)
             token_type_ids = token_type_ids.to(device)
+
             results = metaicl_model.run_model(input_ids, attention_mask, token_type_ids)
             return input_ids, results.cpu().detach().item()
 
