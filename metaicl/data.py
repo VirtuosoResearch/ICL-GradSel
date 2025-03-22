@@ -231,8 +231,8 @@ class MetaICLData(object):
             test_data.append(dp.copy())
         for idx, dp in enumerate(_val_data):
             if "output" not in dp: dp["output"] = dp["options"][0]
-            if idx<= 10: dev_data.append(dp.copy())
-            elif idx<=109: val_data.append(dp.copy())
+            if idx<= 15: dev_data.append(dp.copy())
+            val_data.append(dp.copy())
         task = _test_data[0]["task"]
         with open(f"./features/{task}_test_features.json", "r") as file: test_features = json.load(file)
         with open(f"./features/{task}_val_features.json", "r") as file: val_features = json.load(file)

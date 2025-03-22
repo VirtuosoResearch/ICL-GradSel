@@ -9,7 +9,7 @@ from metaicl.data import prepro_sentence_pair_single
 from utils.data import load_data
 
 class Forward():
-    def __init__(self, gpt2="meta-llama/Llama-3.2-3B", device=0, k=3, dataset="glue-rte"):
+    def __init__(self, gpt2="meta-llama/Llama-2-13b-hf", device=0, k=3, dataset="glue-rte"):
         
         self.do_zeroshot = True
         self.use_demonstrations = True
@@ -118,3 +118,4 @@ class Forward():
 
 fwd = Forward()
 print(fwd.forward(0))
+print(torch.cuda.memory_summary(device=0, abbreviated=False))
