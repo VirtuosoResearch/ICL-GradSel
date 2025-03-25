@@ -35,7 +35,7 @@ def main(args):
     model = AutoModelForCausalLM.from_pretrained(
         model_name, 
         quantization_config=bnb_config,
-        device_map= {"": 0}
+        device_map= {"": args.device}
     )
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model=model.to(device)
@@ -164,7 +164,8 @@ def main(args):
 
         sample_errors = []
         for jdx, label in enumerate(dp["options"]):
-            error = np.fabs(inference_loss[label] - option_losses[jdx]) / max(inference_loss[label], option_losses[jdx])
+            # print(f"inference_loss[label] : {inference_loss[label]}, option_losses[jdx] : {option_losses[jdx]}")
+            error = np.fabs(np.fabs(inference_loss[label]) - np.fabs(option_losses[jdx])) / max(np.fabs(inference_loss[label]), np.fabs(option_losses[jdx]))
             current_error += error
             sample_errors.append(error)
 
@@ -182,6 +183,7 @@ def main(args):
     print("error : ", current_error)
     print("error variance : ", error_variance)
     print("accuracy : ", accuracy)
+    # print(torch.cuda.memory_summary(device=args.device, abbreviated=False))
 
 
 
