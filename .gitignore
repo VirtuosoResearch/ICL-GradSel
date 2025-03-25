@@ -34,3 +34,8 @@ my*
 *.pkl
 *.jsonl
 *.csv
+
+.ipynb_checkpoints
+__pycache__
+models.zip
+models
