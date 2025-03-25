@@ -22,10 +22,10 @@ run_dir = "../models"
 
 from samplers import get_data_sampler
 from tasks import get_task_sampler
-#task = "linear_regression"
+task = "linear_regression"
 #task = "sparse_linear_regression"
 #task = "decision_tree"
-task = "relu_2nn_regression"
+#task = "relu_2nn_regression"
 
 run_id = "pretrained"  # if you train more models, replace with the run_id from the table above
 
@@ -38,8 +38,7 @@ if recompute_metrics:
 model, conf = get_model_from_run(run_path)
 
 n_dims = conf.model.n_dims
-#batch_size = conf.training.batch_size
-batch_size = 40
+batch_size = conf.training.batch_size
 
 data_sampler = get_data_sampler(conf.training.data, n_dims)
 task_sampler = get_task_sampler(
@@ -152,10 +151,10 @@ if not use_checkpoint:
     b_size = 3
 else:
     n_total = 41
-    n_labeled = 20
+    n_labeled = 10
     n_dims = conf.model.n_dims
     #b_size = conf.training.batch_size
-    b_size = batch_size
+    b_size = 50
 ratio = n_total // n_labeled
 
 n_unlabeled = n_total - n_labeled
@@ -358,6 +357,8 @@ def loss_score(model, seq, n_labeled, all_sample_list, sub_sample_list, task):
     #print(loss_sample)
     return score
 
+
+
 def contrastive_select(model, xs, ys, beta, sample_list, b_size, n_labeled, set_size_list):
     n_points = xs.shape[1] - 1
     n = len(sample_list)
@@ -500,14 +501,14 @@ def fs_estimate_select(model, xs, ys, beta, sample_list, b_size, n_labeled, set_
 
     return loss_list
 
-def fs_select(model, xs, ys, sample_list, b_size, n_labeled, set_size_list, use_approx=True):
+def fs_select(model, xs, ys, beta, sample_list, b_size, n_labeled, set_size_list, use_approx=True):
     n_points = xs.shape[1] - 1
     n = len(sample_list)
     print(n)
     pos_index = torch.zeros(n, n)
     seq_list = []
     for i in range(xs.shape[0]):
-        seq_list.append(Input_sequence(xs[i], ys[i], n_labeled, i))
+        seq_list.append(Input_sequence(xs[i], ys[i], n_labeled, beta[i], i))
 
     # init select index for query in each sequence
     loss_list = []
@@ -798,12 +799,12 @@ def beta_select(model, xs, ys, beta, sample_list, n_labeled, set_size_list):
     
     return loss_list
 
-def random_select(model, xs, ys, sample_list, n_labeled, set_size_list):
+def random_select(model, xs, ys, beta, sample_list, n_labeled, set_size_list):
     loss_list = []
     for set_size in set_size_list:
         seq_list = []
         for i in range(xs.shape[0]):
-            seq_list.append(Input_sequence(xs[i], ys[i], n_labeled, i))
+            seq_list.append(Input_sequence(xs[i], ys[i], n_labeled, beta[i], i))
         # select prompt samples
         # get random samples
         for i in range(xs.shape[0]):
@@ -840,22 +841,24 @@ def random_select(model, xs, ys, sample_list, n_labeled, set_size_list):
 
 
 class Sample():
-    def __init__(self, x, y, c):
+    def __init__(self, x, y, c, beta):
         self.x = x
         self.y = y
         self.c = c
+        self.beta = beta
     
     def __repr__(self):
         return f"x: {self.x}, y: {self.y}, c: {self.c}\n"
 
 class Input_sequence():
-    def __init__(self, xs, ys, length, c):
+    def __init__(self, xs, ys, length, beta, c):
         self.xs = xs
         self.ys = ys
         self.prompt_x = xs[:length]
         self.prompt_y = ys[:length]
         self.query_x = xs[-1]
         self.query_y = ys[-1]
+        self.beta = beta
         self.c = c
     
     def add_sample(self, sample):
@@ -919,6 +922,244 @@ def generate_synthetic_data(num_sequences=100, n_points=10, x_dim=8, diff_diftri
     #print(xs_b[0])
     return xs_b
 
+def fs_select_debug(model, xs, ys, beta, sample_list, b_size, n_labeled, set_size_list):
+    n_points = xs.shape[1] - 1
+    n = len(sample_list)
+    print(n)
+    pos_index = torch.zeros(n, n)
+    seq_list = []
+    for i in range(xs.shape[0]):
+        seq_list.append(Input_sequence(xs[i], ys[i], n_labeled, beta[i], i))
+
+    # init select index for query in each sequence
+    loss_list = []
+    loss_list_infer = []
+    max_points = np.max(set_size_list)
+    sub_sample_list = [[] for _ in range(b_size)]
+    sub_sample_index = [[] for _ in range(b_size)]
+
+    test_i = 0
+    test_j = n_points
+    i_seq = copy.deepcopy(seq_list[test_i])
+    i_seq.get_input(last_prompt=True)
+    xs, ys = sequence_to_tensor([i_seq])
+    pred, embeds_0 = model.forward_with_embeds(xs, ys)
+    print(pred.shape)
+    print("pred: ", pred[0, -1])
+    metric = task.get_metric()
+    loss = metric(pred, ys)
+    #grad = torch.autograd.grad(loss.mean(), embeds_0, allow_unused=True)
+    grad = torch.autograd.grad(pred[0, -1], embeds_0)[0]
+    print("grad shape", grad.shape)
+    print(grad[:, 0::2, :])
+    loss_x0 = loss.detach()[:, -1]
+    estimate_grad = grad[:, -1, :]
+    embeds_0 = embeds_0[:, 0::2, :]
+    embeds_x0 = embeds_0[:, -1, :]
+
+    new_seq = copy.deepcopy(seq_list[test_i])
+    new_seq.add_sample(sample_list[test_j])
+    new_seq.get_input(last_prompt=True)
+    new_xs, new_ys = sequence_to_tensor([new_seq])
+    embeds = model.embed(new_xs, new_ys)
+    #print(embeds_0[:, -1, :])
+    #print(embeds[:, -2, :])
+    delta_embeds_real = embeds[:, -1, :] - embeds[:, -2, :]
+    delta_x = new_xs[:, -1, :] - xs[:, -1, :]
+    delta_y = new_ys[:, -1] - ys[:, -1]
+    delta_embeds = model.embed_x(delta_x)
+    #print(delta_embeds_real)
+    #print(delta_embeds)
+    approx_pred = delta_embeds @ estimate_grad.T + embeds_x0
+    print(approx_pred)
+    approx_loss = delta_embeds @ estimate_grad[:, -1, :].T + loss_x0
+    print(approx_loss)
+    #approx_loss = torch.dot(estimate_grad, delta_embeds.squeeze(0)) + loss_x0
+    #approx_loss = torch.dot(estimate_grad, delta_embeds.squeeze(0)) + loss_x0
+    #taylor_approx = y1 + torch.sum(grad_h1 * delta_h)
+    pred = model(new_xs, new_ys)
+    real_loss = metric(pred, new_ys)
+    print(loss_x0)
+    print(real_loss[:, -1])
+    
+    print(a)
+    return loss_list
+
+def fs_select_debug2(model, xs, ys, beta, sample_list, b_size, n_labeled, set_size_list):
+    n_points = xs.shape[1] - 1
+    n = len(sample_list)
+    print(n)
+    pos_index = torch.zeros(n, n)
+    seq_list = []
+    for i in range(xs.shape[0]):
+        seq_list.append(Input_sequence(xs[i], ys[i], n_labeled, beta[i], i))
+
+    # init select index for query in each sequence
+    loss_list = []
+    loss_list_infer = []
+    max_points = np.max(set_size_list)
+    sub_sample_list = [[] for _ in range(b_size)]
+    sub_sample_index = [[] for _ in range(b_size)]
+
+    test_i = 0
+    test_j = n_points
+    n_val = 1
+    i_seq = copy.deepcopy(seq_list[test_i])
+    #i_seq.add_sample()
+    #i_seq.get_input(query_range=n_val)
+    i_seq.get_input(last_prompt=True)
+    xs, ys = sequence_to_tensor([i_seq])
+    xs_variable = xs.clone()
+    xs_variable.requires_grad = True
+    pred, embeds_0 = model.forward_with_embeds(xs_variable, ys)
+    print(pred.shape)
+    print("pred: ", pred[0, -1])
+    metric = task.get_metric()
+    loss = F.mse_loss(pred[:, -1], ys[:, -1])
+    #grad = torch.autograd.grad(loss.mean(), embeds_0, allow_unused=True)
+    #print(pred.mean())
+    #print(pred[0, -1])
+    grad = torch.autograd.grad(pred[0, -1], embeds_0, retain_graph=True, create_graph=True)[0]
+    #grad = torch.autograd.grad(pred[0, -1], xs_variable, retain_graph=True, create_graph=True)[0]
+    grad = grad[:, 0::2, :]
+    embeds_0 = embeds_0[:, 0::2, :]
+    print("xs shape", embeds_0.shape)
+    print("grad shape", grad.shape)
+    loss_x0 = loss.detach()[:, -1]
+    print(grad.shape)
+    grad_0 = grad[:, -n_val-1, :]
+    #print("--grad", grad_0)
+    #print("--beta", sample_list[test_j].beta)
+    embeds_0 = embeds_0[:, -n_val-1, :]
+
+    new_seq = copy.deepcopy(seq_list[test_i])
+    new_seq.add_sample(sample_list[test_j])
+    #new_seq.get_input(query_range=n_val)
+    new_seq.get_input(last_prompt=True)
+    new_xs, new_ys = sequence_to_tensor([new_seq])
+    embeds = model.embed(new_xs, new_ys)
+    #print(embeds_0[:, -1, :])
+    #print(embeds[:, -2, :])
+    delta_embeds = embeds[:, -n_val-1, :] - embeds[:, -n_val-2, :]
+    print("check embeds 0: ", (embeds_0 - embeds[:, -n_val-2, :]).mean())
+    #print(embeds_0)
+    #print(embeds[:, -n_val-2, :])
+
+    delta_term = torch.sum(grad_0 * delta_embeds, dim=1, keepdim=True)
+    #delta_term = delta_embeds @ grad_0.T
+    print(delta_term.shape)
+    #delta_embeds = model.embed_x(delta_x)
+    #print(delta_embeds_real)
+    #print(delta_embeds)
+    approx_pred = delta_term + pred[0, -1]
+    print("x0 pred", pred[0, -1])
+    print("delta ", delta_term)
+    print("approx pred", approx_pred)
+    #approx_loss = delta_embeds @ estimate_grad[:, -1, :].T + loss_x0
+    #print(approx_loss)
+    #approx_loss = torch.dot(estimate_grad, delta_embeds.squeeze(0)) + loss_x0
+    #approx_loss = torch.dot(estimate_grad, delta_embeds.squeeze(0)) + loss_x0
+    #taylor_approx = y1 + torch.sum(grad_h1 * delta_h)
+    pred = model(new_xs, new_ys)
+    real_loss = metric(pred, new_ys)
+    print("real pred", pred[:, -1])
+    #print(real_loss[:, -1])
+    
+    print(a)
+    return loss_list
+
+def fs_select_debug3(model, xs, ys, beta, sample_list, b_size, n_labeled, set_size_list):
+    n_points = xs.shape[1] - 1
+    n = len(sample_list)
+    print(n)
+    pos_index = torch.zeros(n, n)
+    seq_list = []
+    for i in range(xs.shape[0]):
+        seq_list.append(Input_sequence(xs[i], ys[i], n_labeled, beta[i], i))
+
+    # init select index for query in each sequence
+    loss_list = []
+    loss_list_infer = []
+    max_points = np.max(set_size_list)
+    sub_sample_list = [[] for _ in range(b_size)]
+    sub_sample_index = [[] for _ in range(b_size)]
+
+    test_i = 0
+    test_j = n_points
+    n_val = 1
+    i_seq = copy.deepcopy(seq_list[test_i])
+    i_seq.pad()
+    #i_seq.add_sample(sample_list[test_j])
+    i_seq.get_input(query_range=n_val)
+    #i_seq.get_input(last_prompt=True)
+    xs, ys = sequence_to_tensor([i_seq])
+    xs_variable = xs.clone()
+    xs_variable.requires_grad = True
+    pred, embeds_0 = model.forward_with_embeds(xs_variable, ys)
+    print(pred.shape)
+    print("pred: ", pred[0, -1])
+    metric = task.get_metric()
+    loss = F.mse_loss(pred[:, -n_val:], ys[:, -n_val:])
+    loss.backward()
+    print(embeds_0.grad)
+    #grad = torch.autograd.grad(loss.mean(), embeds_0, allow_unused=True)
+    #print(pred.mean())
+    #print(pred[0, -1])
+    grad = torch.autograd.grad(pred[0, -n_val-1], embeds_0, retain_graph=True, create_graph=True)[0][:, 0::2, :]
+    print(grad)
+    #grad = torch.autograd.grad(pred[0, -1], xs_variable, retain_graph=True, create_graph=True)[0]
+    grad_0 = grad.detach().clone()
+    grad = torch.autograd.grad(pred[0, -n_val], embeds_0, retain_graph=True, create_graph=True)[0][:, 0::2, :]
+    print(grad)
+    grad_1 = grad.detach().clone()
+    embeds_0 = embeds_0[:, 0::2, :]
+    print("xs shape", embeds_0.shape)
+    print("grad shape", grad.shape)
+    print(grad.shape)
+    #print("--beta", sample_list[test_j].beta)
+    #embeds_0 = embeds_0[:, -n_val-1, :]
+
+    new_seq = copy.deepcopy(seq_list[test_i])
+    new_seq.add_sample(sample_list[test_j])
+    new_seq.get_input(query_range=n_val)
+    #new_seq.get_input(last_prompt=True)
+    new_xs, new_ys = sequence_to_tensor([new_seq])
+    new_embeds = model.embed(new_xs, new_ys)
+    #print(embeds_0[:, -1, :])
+    #print(embeds[:, -2, :])
+    delta_embeds = new_embeds - embeds_0
+    print("check", delta_embeds.sum(-1))
+    #print("check embeds 0: ", (embeds_0 - embeds[:, -n_val-2, :]).mean())
+    #print(embeds_0)
+    #print(embeds[:, -n_val-2, :])
+
+    #delta_term = torch.sum(grad_0 * delta_embeds, dim=1, keepdim=True)
+    delta_term = torch.sum(grad_0 * delta_embeds, dim=(1, 2))
+    delta_term_1 = torch.sum(grad_1 * delta_embeds, dim=(1, 2))
+    #delta_term = delta_embeds @ grad_0.T
+    #delta_term = torch.matmul(delta_embeds, grad_0.transpose(1, 2)).sum(-2) # why
+    print(delta_term.shape)
+    #delta_embeds = model.embed_x(delta_x)
+    #print(delta_embeds_real)
+    #print(delta_embeds)
+    approx_pred = delta_term + pred
+    print("x0 pred", pred)
+    print("delta ", delta_term)
+    print("delta 2 ", delta_term_1)
+    print("approx pred", approx_pred)
+    #approx_loss = delta_embeds @ estimate_grad[:, -1, :].T + loss_x0
+    #print(approx_loss)
+    #approx_loss = torch.dot(estimate_grad, delta_embeds.squeeze(0)) + loss_x0
+    #approx_loss = torch.dot(estimate_grad, delta_embeds.squeeze(0)) + loss_x0
+    #taylor_approx = y1 + torch.sum(grad_h1 * delta_h)
+    pred = model(new_xs, new_ys)
+    real_loss = metric(pred, new_ys)
+    print("real pred", pred)
+    #print(real_loss[:, -1])
+    
+    print(a)
+    return loss_list
+
 def generate_orthogonal_matrix(n, m):
     if n > m:
         raise ValueError("The number of rows (n) should not be greater than the number of columns (m) for an orthogonal set.")
@@ -930,13 +1171,24 @@ def generate_orthogonal_matrix(n, m):
     Q, _ = torch.linalg.qr(A.T)  # QR decomposition on the transpose
     return Q.T  # Transpose back to get row-wise orthogonality
 
-runs = 1
+runs = 3
 for run in range(runs):
     task = task_sampler()
-    xs = data_sampler.sample_xs(b_size=batch_size, n_points=n_total)
+    xs = generate_synthetic_data(num_sequences=b_size, n_points=n_total, x_dim=n_dims, diff_diftribution=False, alpha=0.0)
     xs = xs.to(device)
-    ys = task.evaluate(xs)
-    ys = ys.to(device)
+    n_classes = b_size // 10
+    #n_classes = 1
+    #anchor_points = torch.randn(n_classes, n_dims).to(device)
+    anchor_points = generate_orthogonal_matrix(n_classes, n_dims).to(device)
+    beta = torch.randn(b_size, n_dims, 1).to(device)
+    alpha = 1
+    for i in range(beta.shape[0]):
+        i_class = torch.randint(0, n_classes, (1,))
+        beta[i] = ((1-alpha)*beta[i] + anchor_points[i_class].T)
+
+    ys = (xs @ beta)[:, :, 0]
+    #print(xs)
+    ys += torch.randn_like(ys).to(device) * noise
     #print(ys.shape)
     labels = ys.clone()
     #ys[:, n_labeled:] = torch.zeros_like(ys[:, n_labeled:])
@@ -951,28 +1203,27 @@ for run in range(runs):
     for i in range(xs.shape[0]):
         # -1 for remaining the last sample as query
         for j in range(xs.shape[1]-1):
-            s = Sample(xs[i, j], ys[i, j], i)
+            s = Sample(xs[i, j], ys[i, j], i, beta[i])
             sample_list.append(s)
     
     #print(sample_list)
 
-    set_size_list = [1,5,10,15,20]
+    set_size_list = [1,2,3,4,5,10,15,20,30]
     #print(xs)
     #print(ys)
     pred_full_label, loss_full_label = predict_full_label(model, xs, ys=labels, labels=labels)
     loss_full_label_list.append(loss_full_label)
     
-    
-    #loss_fs_estimate = fs_select(model, xs, ys, sample_list, b_size, n_labeled, set_size_list, use_approx=True)
+    loss_fs_estimate = fs_select(model, xs, ys, beta, sample_list, b_size, n_labeled, set_size_list, use_approx=True)
     #loss_fs_estimate = fs_select_debug3(model, xs, ys, beta, sample_list, b_size, n_labeled, set_size_list)
-    #print(loss_fs_estimate)
-    #loss_fs_estimate_list.append(loss_fs_estimate)
+    print(loss_fs_estimate)
+    loss_fs_estimate_list.append(loss_fs_estimate)
 
-    #loss_fs_inference = fs_select(model, xs, ys, sample_list, b_size, n_labeled, set_size_list, use_approx=False)
-    #print(loss_fs_inference)
-    #loss_fs_inference_list.append(loss_fs_inference)
+    loss_fs_inference = fs_select(model, xs, ys, beta, sample_list, b_size, n_labeled, set_size_list, use_approx=False)
+    print(loss_fs_inference)
+    loss_fs_inference_list.append(loss_fs_inference)
     
-    loss_random = random_select(model, xs, ys, sample_list, n_labeled, set_size_list)
+    loss_random = random_select(model, xs, ys, beta, sample_list, n_labeled, set_size_list)
     print(loss_random)
     loss_random_list.append(loss_random)
 
@@ -997,15 +1248,17 @@ print(x)
 
 plt.plot(x, np.mean(loss_random_list, axis=0), lw=2, label="random")
 plt.fill_between(x, np.mean(loss_random_list, axis=0)-np.std(loss_random_list, axis=0), np.mean(loss_random_list, axis=0)+np.std(loss_random_list, axis=0), alpha=0.2)
+#plt.plot(x, np.mean(loss_beta_list, axis=0), lw=2, label="beta")
+#plt.fill_between(x, np.mean(loss_beta_list, axis=0)-np.std(loss_beta_list, axis=0), np.mean(loss_beta_list, axis=0)+np.std(loss_beta_list, axis=0), alpha=0.2)
+#plt.plot(x, np.mean(loss_contrastive_list, axis=0), lw=2, label="contrastive")
+#plt.fill_between(x, np.mean(loss_contrastive_list, axis=0)-np.std(loss_contrastive_list, axis=0), np.mean(loss_contrastive_list, axis=0)+np.std(loss_contrastive_list, axis=0), alpha=0.2)
 
+plt.plot(x, np.mean(loss_fs_inference_list, axis=0), lw=2, label="inference")
+plt.fill_between(x, np.mean(loss_fs_inference_list, axis=0)-np.std(loss_fs_inference_list, axis=0), np.mean(loss_fs_inference_list, axis=0)+np.std(loss_fs_inference_list, axis=0), alpha=0.2)
+plt.plot(x, np.mean(loss_fs_estimate_list, axis=0), lw=2, label="estimate")
+plt.fill_between(x, np.mean(loss_fs_estimate_list, axis=0)-np.std(loss_fs_estimate_list, axis=0), np.mean(loss_fs_estimate_list, axis=0)+np.std(loss_fs_estimate_list, axis=0), alpha=0.2)
 
-#plt.plot(x, np.mean(loss_fs_inference_list, axis=0), lw=2, label="inference")
-#plt.fill_between(x, np.mean(loss_fs_inference_list, axis=0)-np.std(loss_fs_inference_list, axis=0), np.mean(loss_fs_inference_list, axis=0)+np.std(loss_fs_inference_list, axis=0), alpha=0.2)
-#plt.plot(x, np.mean(loss_fs_estimate_list, axis=0), lw=2, label="estimate")
-#plt.fill_between(x, np.mean(loss_fs_estimate_list, axis=0)-np.std(loss_fs_estimate_list, axis=0), np.mean(loss_fs_estimate_list, axis=0)+np.std(loss_fs_estimate_list, axis=0), alpha=0.2)
-
-
-np.savez("./results/relunn.npz", x=x, loss_full_label_list=loss_full_label_list, loss_fs_estimate_list=loss_fs_estimate_list, loss_fs_inference_list=loss_fs_inference_list, loss_random_list=loss_random_list)
+np.savez("./results/noisy_LR.npz", x=x, loss_full_label_list=loss_full_label_list, loss_fs_estimate_list=loss_fs_estimate_list, loss_fs_inference_list=loss_fs_inference_list, loss_random_list=loss_random_list)
 
 #plt.plot(loss_full_label, lw=2, label="Full label")
 #plt.plot(loss_unlabeled_once, lw=2, label="Unlabeled once")
@@ -1014,4 +1267,4 @@ np.savez("./results/relunn.npz", x=x, loss_full_label_list=loss_full_label_list,
 plt.xlabel("# in-context examples")
 plt.ylabel("squared error")
 plt.legend()
-plt.savefig("relunn.png")
+plt.savefig("noisy_LR_test.png")
