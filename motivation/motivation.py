@@ -50,7 +50,7 @@ def main(args):
     for option in anchor_dp["options"]:
         input_tokens =  init+"Input: " + anchor_dp["input"] + " Label:"
         
-        tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=100*(args.k+1)).input_ids.to(device)
+        tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=args.max_length*(args.k+1)).input_ids.to(device)
         tokens_output = tokenizer(option, return_tensors="pt").input_ids[0][-1].to(device)
 
         # last_token_idx = tokens_input.ne(tokenizer.pad_token_id).sum(dim=1) - 1
@@ -68,7 +68,7 @@ def main(args):
         print(f"embedding_input shape: {embedding_input.shape}")
         print(f"Max index in inputs_embeds: {embedding_input.max()}")
 
-        embedding_input = embedding_input.to(torch.float32)  
+        embedding_input = embedding_input.to(model.dtype)  
         output_logits = model(inputs_embeds=embedding_input).logits
         last_token_idx = tokens_input.shape[1] - 1
         log_probs = F.log_softmax(output_logits[0, last_token_idx, :], dim=-1)
@@ -86,7 +86,7 @@ def main(args):
         for option in dp["options"]:
             input_tokens =init+ "Input: " + dp["input"] + " Label:"
             
-            tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=100*(args.k+1)).input_ids.to(device)
+            tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=args.max_length*(args.k+1)).input_ids.to(device)
             tokens_output = tokenizer(option, return_tensors="pt").input_ids[0][-1].to(device)
 
             # last_token_idx = tokens_input.ne(tokenizer.pad_token_id).sum(dim=1) - 1
@@ -97,6 +97,7 @@ def main(args):
                 elif "opt" in model_name: embedding_input = model.model.decoder.embed_tokens(tokens_input)
                 else: embedding_input = model.model.embed_tokens(tokens_input)
             
+            embedding_input = embedding_input.to(model.dtype)
             embedding_input.requires_grad = True
 
             output_logits = model(inputs_embeds=embedding_input).logits
@@ -126,7 +127,7 @@ def main(args):
         for option in dp["options"]:
             input_tokens = init+"Input: " + dp["input"] + " Label:"
 
-            tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=100*(args.k+1)).input_ids.to(device)
+            tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=args.max_length*(args.k+1)).input_ids.to(device)
 
             with torch.no_grad():
                 if "gpt2" in model_name: 
@@ -149,7 +150,8 @@ def main(args):
 
         sample_errors = []
         for jdx, label in enumerate(dp["options"]):
-            error = np.fabs(inference_loss[label] - option_losses[jdx]) / max(inference_loss[label], option_losses[jdx])
+            # print(f"inference_loss[label] : {inference_loss[label]}, option_losses[jdx] : {option_losses[jdx]}")
+            error = np.fabs(np.fabs(inference_loss[label]) - np.fabs(option_losses[jdx])) / max(np.fabs(inference_loss[label]), np.fabs(option_losses[jdx]))
             current_error += error
             sample_errors.append(error)
 
@@ -164,10 +166,10 @@ def main(args):
 
     error_variance = np.var(error_list) if error_list else 0
 
-    print("len(test_data[0][\"options\"]) : ",len(test_data[0]["options"]))
     print("error : ", current_error)
     print("error variance : ", error_variance)
     print("accuracy : ", accuracy)
+    # print(torch.cuda.memory_summary(device=args.device, abbreviated=False))
 
 
 
@@ -175,6 +177,7 @@ if __name__=="__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--task", default="superglue-cb", type=str)
     parser.add_argument("--device", default=0, type=int)
+    parser.add_argument("--max_length", default=128, type=int)
     parser.add_argument("--model", default="meta-llama/Llama-3.2-1B", type=str)
     parser.add_argument("--k", default=0, type=int)
     parser.add_argument("--seed", default=0, type=int)
