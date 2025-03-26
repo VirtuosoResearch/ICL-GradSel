@@ -107,7 +107,7 @@ class MetaICLModel(object):
             model = AutoModelForCausalLM.from_pretrained(gpt2)
         elif "gpt-j" in gpt2:
             model = AutoModelForCausalLM.from_pretrained("EleutherAI/gpt-j-6b") #/gpt2)
-        elif "Llama" in gpt2 or "opt" in gpt2:
+        elif "Llama" in gpt2 or "opt" or "deepseek" in gpt2:
             model = AutoModelForCausalLM.from_pretrained(gpt2)
         else:
             raise NotImplementedError(checkpoint)
