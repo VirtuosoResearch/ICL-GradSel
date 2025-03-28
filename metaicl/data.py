@@ -21,6 +21,10 @@ warnings.filterwarnings("ignore", category=UserWarning)
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers import GPT2LMHeadModel, GPT2Tokenizer, OPTForCausalLM
 from tqdm import tqdm
+from thop import profile
+
+logging.getLogger("thop").setLevel(logging.WARNING)
+
 # import sys
 # import os
 # sys.path.append(os.path.abspath(os.path.dirname(__file__) + "/.."))
@@ -50,7 +54,7 @@ class MetaICLData(object):
 
     def __init__(self, device=0, logger=None, tokenizer=None, method="channel", use_demonstrations=True, k=16,
                  max_length=1024, max_length_per_example=256,
-                 do_tensorize=False, tensorize_dir=None, n_process=None, n_gpu=None, local_rank=-1):
+                 do_tensorize=False, tensorize_dir=None, n_process=None, n_gpu=None, local_rank=-1, is_flops=False):
 
         self.logger = logger
         self.tokenizer = tokenizer
@@ -70,6 +74,7 @@ class MetaICLData(object):
         self.metadata = None
         self.device = device
         self.is_null = False
+        self.is_flops = is_flops
 
 
         if self.tokenizer is None:
@@ -116,7 +121,12 @@ class MetaICLData(object):
             attention_mask = attention_mask.to(device)
             token_type_ids = token_type_ids.to(device)
             results = metaicl_model.run_model(input_ids, attention_mask, token_type_ids)
-            return input_ids, results.cpu().detach().item()
+
+            if self.is_flops:
+                flops, params = profile(metaicl_model.model, inputs=(input_ids,))
+            else: flops =0
+
+            return input_ids, results.cpu().detach().item(), flops
 
         option_tokens = [tokenizer(option)["input_ids"] for option in dp['options']]
         input_tokens = tokenizer("Input: " + dp["input"] + " " + "Label:")["input_ids"]
@@ -124,15 +134,20 @@ class MetaICLData(object):
         # metaicl_model.model.to(device)
 
         one_trial_losses = []
+
+        total_flops = 0
         for option_token in option_tokens:
-            input_ids, results = run_a_forward_pass(demonstrations + input_tokens, option_token, tokenizer)
+            input_ids, results, flops = run_a_forward_pass(demonstrations + input_tokens, option_token, tokenizer)
+            total_flops+=flops
+            # self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
             one_trial_losses.append(results)
+
         idx = dp["options"].index(dp["output"])
         label_id = np.argmin(one_trial_losses)
         label = dp["options"][label_id]
         if return_loss:
-            return one_trial_losses[idx]
-        return label_id, label
+            return one_trial_losses[idx], total_flops
+        return label_id, label, total_flops
 
     def evaluate_accuracy(self, gpt2, metaicl_model, demonstrations, dev_data, task):
         correct = 0; total = len(dev_data)
@@ -140,10 +155,13 @@ class MetaICLData(object):
         for item in demonstrations:
             input_str = input_str + "Input: "+ item["input"] + " "+ "Label: "+item["output"]+"\n"
         input_token = self.tokenizer(input_str)["input_ids"]
+        total_flops=0
         for idx, dp in enumerate(dev_data):
-            _, label = self.forward(gpt2, metaicl_model, input_token, dp, task)
+            _, label, flops = self.forward(gpt2, metaicl_model, input_token, dp, task)
+            self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
+            total_flops+=flops
             if label == dp["output"]: correct += 1
-        return correct / total if total > 0 else 0
+        return correct / total if total > 0 else 0 , total_flops
 
     def evaluate_loss(self, gpt2, metaicl_model, demonstrations, dev_data, task):
         total = len(dev_data)
@@ -152,24 +170,30 @@ class MetaICLData(object):
         for item in demonstrations:
             input_str = input_str + "Input: "+ item["input"] + " "+ "Label: "+item["output"]+"\n"
         input_token = self.tokenizer(input_str)["input_ids"]
+        total_flops =0
         for idx, dp in enumerate(dev_data):
-            loss = self.forward(gpt2, metaicl_model, input_token, dp, task, return_loss=True)
+            loss, flops = self.forward(gpt2, metaicl_model, input_token, dp, task, return_loss=True)
+            total_flops+=flops
+            self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
             all_loss+=loss
-        return all_loss
+        return all_loss, total_flops
 
     def greedy_select_condition(self, gpt2, metaicl_model, test_data, dev_data, subset_size=10):
         selected_indices, best_demonstrations = [], []
         best_demonstrations = []
 
+        total_flops = 0
 
         while len(selected_indices) < self.k:
             base_index = next(i for i in range(len(test_data)) if i not in selected_indices)
             best_candidate = base_index
-            best_loss = self.evaluate_loss(gpt2, metaicl_model, best_demonstrations+[test_data[base_index]], dev_data, test_data[0]["task"])
+            best_loss, flops = self.evaluate_loss(gpt2, metaicl_model, best_demonstrations+[test_data[base_index]], dev_data, test_data[0]["task"])
+            total_flops+=flops
+            # self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
             for i in range(len(test_data)):
                 if (i in selected_indices) or i==base_index: continue
                 candidate_demonstrations = best_demonstrations + [test_data[i]]
-                candidate_loss = self.evaluate_loss(gpt2, metaicl_model, candidate_demonstrations, dev_data, test_data[0]["task"])
+                candidate_loss, flops = self.evaluate_loss(gpt2, metaicl_model, candidate_demonstrations, dev_data, test_data[0]["task"])
                 
                 self.logger.info(f"----------------candidate_loss : {candidate_loss}----------------")
                 if candidate_loss < best_loss:
@@ -180,7 +204,7 @@ class MetaICLData(object):
             self.logger.info("**"*20)
             self.logger.info(f"selected_indices: {selected_indices}; best_candidate : {best_candidate}")
             best_demonstrations.append(test_data[best_candidate])
-        return best_demonstrations, best_loss
+        return best_demonstrations, best_loss, total_flops
 
     def greedy_select_subset(self, gpt2, test_data, dev_data, subset_size=10):
         selected_indices, best_demonstrations = [], []
@@ -246,6 +270,7 @@ class MetaICLData(object):
 
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
+        total_flops = 0
         for dp_idx, dp in tqdm(enumerate(val_data), total=len(val_data), leave=True, position=0):
             inputs, outputs, answer = self._prepro_each_datapoint(
                 dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
@@ -255,8 +280,8 @@ class MetaICLData(object):
 
                 samples, top_indices, _ = self._select_top_k_neighbors(dp_feature, test_features, test_data, k=4,dp_idx=-1)
 
-                ground, _ = self.greedy_select_condition(gpt2=gpt2, metaicl_model=metaicl_model,test_data=samples, dev_data=dev_data, subset_size=self.k)
-                
+                ground, _, flops = self.greedy_select_condition(gpt2=gpt2, metaicl_model=metaicl_model,test_data=samples, dev_data=dev_data, subset_size=self.k)
+                total_flops+=flops
                 # def greedy_select_subset(self, test_data, dp_data, subset_size=10):
                 demonstrations = []
                 for i, neighbor_dp in enumerate(ground):
@@ -278,6 +303,8 @@ class MetaICLData(object):
                 input_ids.append(encoded[0])
                 attention_mask.append(encoded[1])
                 token_type_ids.append(encoded[2])
+        
+        self.logger.info(f"Total_FLOPS: {total_flops / 1e9:.2f} GFLOPs")
 
         self.tensorized_inputs = dict(input_ids=torch.LongTensor(input_ids),
                                       attention_mask=torch.LongTensor(attention_mask),
@@ -465,6 +492,8 @@ class MetaICLData(object):
         with open(f"./features/{task}_test_features.json", "r") as file: test_features = json.load(file)
         with open(f"./features/{task}_val_features.json", "r") as file: val_features = json.load(file)
         
+        total_flops = 0
+
         add_newlines = False
         checkpoint = None
         metaicl_model = MetaICLModel(logger=self.logger, out_dir= "./cache", device_num=self.device)
@@ -486,7 +515,10 @@ class MetaICLData(object):
 
                 for dk in samples:
                     demonstration+=self.tokenizer("Input: " + dk["input"] + " " + "Label: "+dk["output"])["input_ids"]
-                _, dp["output"]= self.forward(gpt2, metaicl_model, demonstration, dp, dp["task"])
+                _, dp["output"], flops= self.forward(gpt2, metaicl_model, demonstration, dp, dp["task"])
+                self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
+                total_flops+=flops
+
                 correct +=(zt_output==dp["output"])
 
                 psudo_data.append(dp)
@@ -503,11 +535,15 @@ class MetaICLData(object):
             demonstrations+=self.tokenizer("Input: " + neighbor_dp["input"] + " " + "Label: "+neighbor_dp["output"])["input_ids"]
 
         cnt=0
+        
         for dp in tqdm(val_data):
-            _, output = self.forward(gpt2, metaicl_model, demonstrations, dp, dp["task"])
+            _, output, flops = self.forward(gpt2, metaicl_model, demonstrations, dp, dp["task"])
+            self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
+            total_flops+=flops
+            
             cnt += (output==dp["output"])
         self.logger.info(f"Accuracy : {cnt/len(val_data)}")
-
+        self.logger.info(f"Total_FLOPS: {total_flops / 1e9:.2f} GFLOPs")
 
         for i, neighbor_dp in enumerate(ground):
             input_, output_ = self._prepro_each_datapoint(
@@ -518,106 +554,6 @@ class MetaICLData(object):
             inputs, outputs, answer = self._prepro_each_datapoint(
                 dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
                 
-
-            indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
-
-            metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
-
-            for inputs_, outputs_ in zip(inputs, outputs):
-                if self.use_demonstrations:
-                    inputs_ = demonstrations + inputs_
-                encoded = prepro_sentence_pair_single(
-                    inputs_, outputs_, self.max_length, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
-                    allow_truncation=self.use_demonstrations
-                )
-                input_ids.append(encoded[0])
-                attention_mask.append(encoded[1])
-                token_type_ids.append(encoded[2])
-
-        self.tensorized_inputs = dict(input_ids=torch.LongTensor(input_ids),
-                                      attention_mask=torch.LongTensor(attention_mask),
-                                      token_type_ids=torch.LongTensor(token_type_ids))
-        self.metadata = metadata
-
-
-
-    def tensorize_unlabeled(self, gpt2, _test_data, _val_data, m, options=None, add_newlines=True):
-        val_data, test_data, unlab_data =  [], [], []
-        cut_point = len(_test_data)-len(_test_data)//4
-        for idx, dp in enumerate(_test_data):
-            if "output" not in dp: dp["output"] = dp["options"][0]
-            if idx < cut_point: test_data.append(dp.copy())
-            else: unlab_data.append(dp.copy())
-        for dp in _val_data:
-            if "output" not in dp: dp["output"] = dp["options"][0]
-            val_data.append(dp.copy())
-        task = _test_data[0]["task"]
-        test_features_path = f"./features/{task}_test_features.json"
-        with open(test_features_path, "r") as file:
-            test_features = json.load(file)
-        val_features_path = f"./features/{task}_val_features.json"
-        with open(val_features_path, "r") as file:
-            val_features = json.load(file)
-
-        input_ids, attention_mask, token_type_ids = [], [], []
-        metadata = []
-        if self.use_demonstrations:
-            test_texts = [dp["input"] + " " + dp["output"] for dp in test_data]
-            test_labels = [dp["output"] for dp in test_data]
-
-        all_indices = [i for i in range(len(test_data))]
-        # print(all_indices)
-        similarities = [0 for i in range(len(test_data))]
-        forsel, _ = self._forward_selection(
-            embeddings=test_features,
-            top_k_indices=all_indices,
-            m=m, 
-            candidate_labels=test_labels, 
-            test_data=test_data,
-            similarities = similarities,
-            seed=42
-        )
-        demonstration,psu_data = [], []
-        for dp in forsel:
-            demonstration+=self.tokenizer("Input: " + dp["input"] + " " + "Label: "+dp["output"])["input_ids"]
-        for idx, dp in enumerate(unlab_data):
-            used = dp["output"]
-            _, dp["output"]= self.forward(gpt2, demonstration,dp,dp["task"])
-            self.logger.info(used+" ;;; "+dp["output"])
-            psu_data.append(dp)
-
-        for dp in psu_data:
-            test_data.append(dp)
-        test_labels = [dp["output"] for dp in test_data]
-        # print("len(test_data) : ",len(test_data))
-
-        for dp_idx, dp in enumerate(val_data):
-            inputs, outputs, answer = self._prepro_each_datapoint(
-                dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
-
-            if self.use_demonstrations:
-                test_text = dp["input"]
-                dp_feature = val_features[dp_idx]            
-
-                top_k_neighbors, top_k_indices, similarities = self._select_top_k_neighbors(
-                    dp_feature, test_features, test_data, self.k, len(test_data)+1
-                )
-
-                forsel, _ = self._forward_selection(
-                    embeddings=test_features,
-                    top_k_indices=top_k_indices,
-                    m=m, 
-                    candidate_labels=test_labels, 
-                    test_data=test_data,
-                    similarities = similarities,
-                    seed=42
-                )
-
-                demonstrations = []
-                for i, neighbor_dp in enumerate(forsel):
-                    input_, output_ = self._prepro_each_datapoint(
-                        neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
-                    demonstrations += input_ + output_
 
             indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
 
@@ -1701,6 +1637,108 @@ class MetaICLData(object):
 
         if self.local_rank<=0:
             self.logger.info(text)
+
+
+
+    # def tensorize_unlabeled(self, gpt2, _test_data, _val_data, m, options=None, add_newlines=True):
+    #     val_data, test_data, unlab_data =  [], [], []
+    #     cut_point = len(_test_data)-len(_test_data)//4
+    #     for idx, dp in enumerate(_test_data):
+    #         if "output" not in dp: dp["output"] = dp["options"][0]
+    #         if idx < cut_point: test_data.append(dp.copy())
+    #         else: unlab_data.append(dp.copy())
+    #     for dp in _val_data:
+    #         if "output" not in dp: dp["output"] = dp["options"][0]
+    #         val_data.append(dp.copy())
+    #     task = _test_data[0]["task"]
+    #     test_features_path = f"./features/{task}_test_features.json"
+    #     with open(test_features_path, "r") as file:
+    #         test_features = json.load(file)
+    #     val_features_path = f"./features/{task}_val_features.json"
+    #     with open(val_features_path, "r") as file:
+    #         val_features = json.load(file)
+
+    #     input_ids, attention_mask, token_type_ids = [], [], []
+    #     metadata = []
+    #     if self.use_demonstrations:
+    #         test_texts = [dp["input"] + " " + dp["output"] for dp in test_data]
+    #         test_labels = [dp["output"] for dp in test_data]
+
+    #     all_indices = [i for i in range(len(test_data))]
+    #     # print(all_indices)
+    #     similarities = [0 for i in range(len(test_data))]
+    #     forsel, _ = self._forward_selection(
+    #         embeddings=test_features,
+    #         top_k_indices=all_indices,
+    #         m=m, 
+    #         candidate_labels=test_labels, 
+    #         test_data=test_data,
+    #         similarities = similarities,
+    #         seed=42
+    #     )
+    #     demonstration,psu_data = [], []
+    #     for dp in forsel:
+    #         demonstration+=self.tokenizer("Input: " + dp["input"] + " " + "Label: "+dp["output"])["input_ids"]
+    #     for idx, dp in enumerate(unlab_data):
+    #         used = dp["output"]
+    #         _, dp["output"]= self.forward(gpt2, demonstration,dp,dp["task"])
+    #         self.logger.info(used+" ;;; "+dp["output"])
+    #         psu_data.append(dp)
+
+    #     for dp in psu_data:
+    #         test_data.append(dp)
+    #     test_labels = [dp["output"] for dp in test_data]
+    #     # print("len(test_data) : ",len(test_data))
+
+    #     for dp_idx, dp in enumerate(val_data):
+    #         inputs, outputs, answer = self._prepro_each_datapoint(
+    #             dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
+
+    #         if self.use_demonstrations:
+    #             test_text = dp["input"]
+    #             dp_feature = val_features[dp_idx]            
+
+    #             top_k_neighbors, top_k_indices, similarities = self._select_top_k_neighbors(
+    #                 dp_feature, test_features, test_data, self.k, len(test_data)+1
+    #             )
+
+    #             forsel, _ = self._forward_selection(
+    #                 embeddings=test_features,
+    #                 top_k_indices=top_k_indices,
+    #                 m=m, 
+    #                 candidate_labels=test_labels, 
+    #                 test_data=test_data,
+    #                 similarities = similarities,
+    #                 seed=42
+    #             )
+
+    #             demonstrations = []
+    #             for i, neighbor_dp in enumerate(forsel):
+    #                 input_, output_ = self._prepro_each_datapoint(
+    #                     neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
+    #                 demonstrations += input_ + output_
+
+    #         indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
+
+    #         metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
+
+    #         for inputs_, outputs_ in zip(inputs, outputs):
+    #             if self.use_demonstrations:
+    #                 inputs_ = demonstrations + inputs_
+    #             encoded = prepro_sentence_pair_single(
+    #                 inputs_, outputs_, self.max_length, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
+    #                 allow_truncation=self.use_demonstrations
+    #             )
+    #             input_ids.append(encoded[0])
+    #             attention_mask.append(encoded[1])
+    #             token_type_ids.append(encoded[2])
+
+    #     self.tensorized_inputs = dict(input_ids=torch.LongTensor(input_ids),
+    #                                   attention_mask=torch.LongTensor(attention_mask),
+    #                                   token_type_ids=torch.LongTensor(token_type_ids))
+    #     self.metadata = metadata
+
+
 
     # def tensorize_ground(self, gpt2, _test_data, _val_data, options=None, add_newlines=True):
     #     print("options: ", options)

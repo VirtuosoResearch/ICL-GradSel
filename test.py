@@ -75,7 +75,8 @@ def main(logger, args):
     if args.use_demonstrations:
         orig_max_length = max_length
         if args.do_zeroshot:
-            max_length = min(max_length_per_example * args.k, 1024)
+            # max_length = min(max_length_per_example * args.k, 1024)
+            max_length = args.max_length * args.k
             # max_length = max_length * args.k
         else:
             max_length = min(max_length * args.k, 1024)
@@ -84,7 +85,7 @@ def main(logger, args):
         args.test_batch_size, max_length, max_length_per_example))
 
     metaicl_data = MetaICLData(args.device ,logger, tokenizer, args.method,args.use_demonstrations, args.k,
-                               max_length, max_length_per_example)
+                               max_length, max_length_per_example, is_flops=args.is_flops)
     # metaicl_data.to(device)
     results = []
     errors = []
@@ -267,6 +268,8 @@ if __name__=='__main__':
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--is_quant", default=False, action="store_true")
     parser.add_argument("--pseudo_k", default=3, type=int)
+    parser.add_argument("--max_length", default=128, type=int)
+    parser.add_argument("--is_flops", default=False, action="store_true")
     args = parser.parse_args()
 
     handlers = [logging.StreamHandler()]
