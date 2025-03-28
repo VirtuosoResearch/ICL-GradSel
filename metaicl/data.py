@@ -139,7 +139,7 @@ class MetaICLData(object):
         for option_token in option_tokens:
             input_ids, results, flops = run_a_forward_pass(demonstrations + input_tokens, option_token, tokenizer)
             total_flops+=flops
-            # self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
+            # if self.is_flops: self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
             one_trial_losses.append(results)
 
         idx = dp["options"].index(dp["output"])
@@ -158,7 +158,7 @@ class MetaICLData(object):
         total_flops=0
         for idx, dp in enumerate(dev_data):
             _, label, flops = self.forward(gpt2, metaicl_model, input_token, dp, task)
-            self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
+            if self.is_flops: self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
             total_flops+=flops
             if label == dp["output"]: correct += 1
         return correct / total if total > 0 else 0 , total_flops
@@ -174,7 +174,7 @@ class MetaICLData(object):
         for idx, dp in enumerate(dev_data):
             loss, flops = self.forward(gpt2, metaicl_model, input_token, dp, task, return_loss=True)
             total_flops+=flops
-            self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
+            if self.is_flops: self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
             all_loss+=loss
         return all_loss, total_flops
 
@@ -189,7 +189,7 @@ class MetaICLData(object):
             best_candidate = base_index
             best_loss, flops = self.evaluate_loss(gpt2, metaicl_model, best_demonstrations+[test_data[base_index]], dev_data, test_data[0]["task"])
             total_flops+=flops
-            # self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
+            # if self.is_flops: self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
             for i in range(len(test_data)):
                 if (i in selected_indices) or i==base_index: continue
                 candidate_demonstrations = best_demonstrations + [test_data[i]]
@@ -516,7 +516,7 @@ class MetaICLData(object):
                 for dk in samples:
                     demonstration+=self.tokenizer("Input: " + dk["input"] + " " + "Label: "+dk["output"])["input_ids"]
                 _, dp["output"], flops= self.forward(gpt2, metaicl_model, demonstration, dp, dp["task"])
-                self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
+                if self.is_flops: self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
                 total_flops+=flops
 
                 correct +=(zt_output==dp["output"])
@@ -538,7 +538,7 @@ class MetaICLData(object):
         
         for dp in tqdm(val_data):
             _, output, flops = self.forward(gpt2, metaicl_model, demonstrations, dp, dp["task"])
-            self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
+            if self.is_flops: self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
             total_flops+=flops
             
             cnt += (output==dp["output"])
