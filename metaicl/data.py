@@ -123,6 +123,7 @@ class MetaICLData(object):
             results = metaicl_model.run_model(input_ids, attention_mask, token_type_ids)
 
             if self.is_flops:
+                self.logger.info(f"len(input_ids): {input_ids.size()}")
                 flops, params = profile(metaicl_model.model, inputs=(input_ids,))
             else: flops =0
 
@@ -304,7 +305,7 @@ class MetaICLData(object):
                 attention_mask.append(encoded[1])
                 token_type_ids.append(encoded[2])
         
-        self.logger.info(f"Total_FLOPS: {total_flops / 1e9:.2f} GFLOPs")
+        if self.is_flops: self.logger.info(f"Total_FLOPS: {total_flops / 1e9:.2f} GFLOPs")
 
         self.tensorized_inputs = dict(input_ids=torch.LongTensor(input_ids),
                                       attention_mask=torch.LongTensor(attention_mask),
@@ -333,8 +334,11 @@ class MetaICLData(object):
         target_token = output_ids
         loss = -log_probs[target_token]
         
+        flops, params = profile(metaicl_model.model, inputs=(input_ids,))
+        if self.is_flops: self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
+        
         loss.backward()
-        return loss.item(), embedding.grad
+        return loss.item(), embedding.grad, flops
 
     def forward_estim(self, gpt2, metaicl_model, demonstrations, dp, task, return_loss=False):
 
@@ -347,18 +351,20 @@ class MetaICLData(object):
 
         losses = []
         gradients = []
+        total_flops =0
         for option in option_tokens:
-            loss, grad = self.compute_loss_and_gradient(gpt2, metaicl_model, tokenizer, input_tokens, option, device)
+            loss, grad, flops = self.compute_loss_and_gradient(gpt2, metaicl_model, tokenizer, input_tokens, option, device)
             # compute_loss_and_gradient(self, gpt2, model, tokenizer, input_tokens, output_tokens, device):
             losses.append(loss)
             gradients.append(grad)
+            total_flops+=flops
 
         label_id = np.argmin(losses)
         label = dp["options"][label_id]
 
         if return_loss:
-            return losses, gradients, label_id
-        return label_id, label
+            return losses, gradients, label_id, total_flops
+        return label_id, label, total_flops
 
     def compute_embedding_difference(self, gpt2, metaicl_model, base_str, candidate_str):
         device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
@@ -393,6 +399,7 @@ class MetaICLData(object):
         best_accuracy = 0.0
         device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
 
+        total_flops = 0
 
         while len(selected_indices) < self.k:
             
@@ -404,8 +411,10 @@ class MetaICLData(object):
             base_loss_lists, base_gradients = [], []
             self.logger.info(f"============ len(dev_data): {len(dev_data)} ============")
             cnt = 0
+            
             for dp in tqdm(dev_data):
-                losses, grads, label_id = self.forward_estim(gpt2, metaicl_model, best_input_str, dp, base_test_example["task"], return_loss=True)
+                losses, grads, label_id, flops = self.forward_estim(gpt2, metaicl_model, best_input_str, dp, base_test_example["task"], return_loss=True)
+                total_flops+=flops
                 base_loss_lists.append(losses)
                 base_gradients.append(grads)
                 cnt += (dp["options"][label_id]==dp["output"])
@@ -453,7 +462,7 @@ class MetaICLData(object):
             best_demonstrations.append(test_data[best_candidate])
             self.logger.info(f"Selected index {best_candidate}, current best accuracy: {best_candidate_accuracy:.4f}")
 
-        return best_demonstrations, best_candidate_accuracy
+        return best_demonstrations, best_candidate_accuracy, total_flops
     
     def _select_top_k_neighbors(self, test_sample_embedding, test_embeddings, test_data, k, dp_idx):
         similarities = []
@@ -528,8 +537,10 @@ class MetaICLData(object):
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
         
-        ground, _ = self.greedy_select_subset2(gpt2=gpt2, metaicl_model=metaicl_model, test_data=test_data, dev_data=psudo_data)
+        ground, _, flops = self.greedy_select_subset2(gpt2=gpt2, metaicl_model=metaicl_model, test_data=test_data, dev_data=psudo_data)
         demonstrations = []
+
+        total_flops+= flops
 
         for i, neighbor_dp in enumerate(ground):
             demonstrations+=self.tokenizer("Input: " + neighbor_dp["input"] + " " + "Label: "+neighbor_dp["output"])["input_ids"]
