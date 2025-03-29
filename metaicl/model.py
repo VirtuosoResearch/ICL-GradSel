@@ -89,7 +89,8 @@ class MetaICLModel(object):
         if checkpoint is not None and checkpoint.startswith("gpt"):
             gpt2 = checkpoint
             checkpoint = None
-        
+        # self.logger.info(f"--is_quant : {is_quant}")
+        if "deepseek" in gpt2: is_quant=True
         if is_quant:
             bnb_config = BitsAndBytesConfig(
                 load_in_4bit=True,
