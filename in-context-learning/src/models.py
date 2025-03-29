@@ -94,7 +94,7 @@ class TransformerModel(nn.Module):
 
         self.n_positions = n_positions
         self.n_dims = n_dims
-        self._read_in = nn.Linear(n_dims, n_embd, bias=True)
+        self._read_in = nn.Linear(n_dims, n_embd)
         self._backbone = GPT2Model(configuration)
         self._read_out = nn.Linear(n_embd, 1)
 
@@ -121,84 +121,6 @@ class TransformerModel(nn.Module):
             if max(inds) >= ys.shape[1] or min(inds) < 0:
                 raise ValueError("inds contain indices where xs and ys are not defined")
         zs = self._combine(xs, ys)
-        #print(zs)
-        embeds = self._read_in(zs)
-        output = self._backbone(inputs_embeds=embeds).last_hidden_state
-        prediction = self._read_out(output)
-        return prediction[:, ::2, 0][:, inds]  # predict only on xs
-
-    def forward_with_embeds(self, xs, ys, inds=None):
-        if inds is None:
-            inds = torch.arange(ys.shape[1])
-        else:
-            inds = torch.tensor(inds)
-            if max(inds) >= ys.shape[1] or min(inds) < 0:
-                raise ValueError("inds contain indices where xs and ys are not defined")
-        zs = self._combine(xs, ys)
-        #print(zs)
-        embeds = self._read_in(zs)
-        output = self._backbone(inputs_embeds=embeds).last_hidden_state
-        prediction = self._read_out(output)
-        return prediction[:, ::2, 0][:, inds], embeds  # predict only on xs
-    
-    def forward_by_seq(self, zs, inds=None):
-        embeds = self._read_in(zs)
-        output = self._backbone(inputs_embeds=embeds).last_hidden_state
-        prediction = self._read_out(output)
-        return prediction
-    
-    def forward_contrastive_seq(self, seq):
-        embeds = self._read_in(seq)
-        output = self._backbone(inputs_embeds=embeds).last_hidden_state
-        return output
-    
-    def predict_seq(self, seq):
-        embeds = self._read_in(seq)
-        output = self._backbone(inputs_embeds=embeds).last_hidden_state
-        prediction = self._read_out(output)
-        return prediction
-
-    def encoder(self, xs, ys):
-        zs = self._combine(xs, ys)
-        embeds = self._read_in(zs)
-        output = self._backbone(inputs_embeds=embeds).last_hidden_state
-        return output
-    
-    def embed(self, xs, ys):
-        zs = self._combine(xs, ys)
-        embeds = self._read_in(zs)
-        return embeds
-
-    def embed_x(self, xs):
-        embeds = self._read_in(xs)
-        return embeds
-
-    def _combine_unlabelled(self, xs, nx, ys, ny):
-        bsize, points, dim = xs.shape
-        ys_wide = torch.cat(
-            (
-                ys.view(bsize, points, 1),
-                torch.zeros(bsize, points, dim - 1, device=ys.device),
-            ),
-            axis=2,
-        )
-        zs = torch.stack((xs, ys_wide), dim=2)
-        zs = zs.view(bsize, 2 * points, dim)
-        return zs
-
-    def seq_inference(self, xs, ys, inds=None):
-        if inds is None:
-            inds = torch.arange(ys.shape[1])
-        else:
-            inds = torch.tensor(inds)
-            if max(inds) >= ys.shape[1] or min(inds) < 0:
-                raise ValueError("inds contain indices where xs and ys are not defined")
-        seq_ys = torch.zeros_like(ys)
-        seq_ys[:, -1] = ys[:, -1]
-        print(seq_ys)
-        zs = self._combine(xs, seq_ys)
-        #print(zs.shape)
-        #print(zs)
         embeds = self._read_in(zs)
         output = self._backbone(inputs_embeds=embeds).last_hidden_state
         prediction = self._read_out(output)

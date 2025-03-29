@@ -1,3 +1,4 @@
+# %%
 import torch
 import json
 import logging
@@ -7,9 +8,10 @@ from metaicl.data import MetaICLData
 from metaicl.model import MetaICLModel
 from metaicl.data import prepro_sentence_pair_single
 from utils.data import load_data
+from thop import profile
 
 class Forward():
-    def __init__(self, gpt2="meta-llama/Llama-2-13b-hf", device=0, k=3, dataset="glue-rte"):
+    def __init__(self, gpt2="meta-llama/Llama-3.2-1B", device=0, k=3, dataset="glue-rte"):
         
         self.do_zeroshot = True
         self.use_demonstrations = True
@@ -110,6 +112,10 @@ class Forward():
         one_trial_losses = []
         for option_token in option_tokens:
             input_ids, results = run_a_forward_pass(demonstrations + input_tokens, option_token, tokenizer)
+
+            flops, params = profile(metaicl_model.model, inputs=(input_ids,))
+            print(f"FLOPs: {flops / 1e9:.2f} GFLOPs")
+
             one_trial_losses.append(results)
 
         label_id = np.argmin(one_trial_losses)
@@ -118,4 +124,14 @@ class Forward():
 
 fwd = Forward()
 print(fwd.forward(0))
-print(torch.cuda.memory_summary(device=0, abbreviated=False))
+# print(torch.cuda.memory_summary(device=0, abbreviated=False))
+
+# from torchvision import models
+# from thop import profile
+# import torch
+
+# model = models.resnet50()
+# input_tensor = torch.randn(1, 3, 224, 224)
+# flops, params = profile(model, inputs=(input_tensor,))
+# print(f"FLOPs: {flops / 1e9:.2f} GFLOPs")
+# print(f"Params: {params / 1e6:.2f} M")

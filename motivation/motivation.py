@@ -7,7 +7,6 @@ from utils.data import load_data
 from tqdm import tqdm
 import argparse
 import random
-from transformers import BitsAndBytesConfig
 
 # "meta-llama/Llama-3.2-1B"
 def main(args):
@@ -15,30 +14,17 @@ def main(args):
     model_name = args.model
     device = torch.device(f"cuda:{args.device}" if torch.cuda.is_available() else "cpu")
     # device = "cpu"
-    # if "gpt2" in model_name:
-    #     tokenizer = GPT2Tokenizer.from_pretrained(model_name)
-    #     model = GPT2LMHeadModel.from_pretrained(model_name)
-    # elif "opt" in model_name:
-    #     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    #     model = OPTForCausalLM.from_pretrained(model_name)
-    # else:
-    #     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    #     model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16)
+    if "gpt2" in model_name:
+        tokenizer = GPT2Tokenizer.from_pretrained(model_name)
+        model = GPT2LMHeadModel.from_pretrained(model_name)
+    elif "opt" in model_name:
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = OPTForCausalLM.from_pretrained(model_name)
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16)
 
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.bfloat16,
-        bnb_4bit_quant_type="nf4",
-        llm_int8_threshold=6.0
-    )
-
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name, 
-        quantization_config=bnb_config,
-        device_map= {"": 0}
-    )
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model=model.to(device)
+    model=model.to(device, dtype=torch.bfloat16)
 
     model.eval()
     tokenizer.pad_token = tokenizer.eos_token
@@ -164,7 +150,8 @@ def main(args):
 
         sample_errors = []
         for jdx, label in enumerate(dp["options"]):
-            error = np.fabs(inference_loss[label] - option_losses[jdx]) / max(inference_loss[label], option_losses[jdx])
+            # print(f"inference_loss[label] : {inference_loss[label]}, option_losses[jdx] : {option_losses[jdx]}")
+            error = np.fabs(np.fabs(inference_loss[label]) - np.fabs(option_losses[jdx])) / max(np.fabs(inference_loss[label]), np.fabs(option_losses[jdx]))
             current_error += error
             sample_errors.append(error)
 
@@ -182,6 +169,7 @@ def main(args):
     print("error : ", current_error)
     print("error variance : ", error_variance)
     print("accuracy : ", accuracy)
+    # print(torch.cuda.memory_summary(device=args.device, abbreviated=False))
 
 
 
@@ -190,7 +178,7 @@ if __name__=="__main__":
     parser.add_argument("--task", default="superglue-cb", type=str)
     parser.add_argument("--device", default=0, type=int)
     parser.add_argument("--max_length", default=128, type=int)
-    parser.add_argument("--model", default="meta-llama/Llama-2-13b-hf", type=str)
+    parser.add_argument("--model", default="meta-llama/Llama-3.2-1B", type=str)
     parser.add_argument("--k", default=0, type=int)
     parser.add_argument("--seed", default=0, type=int)
     args = parser.parse_args()

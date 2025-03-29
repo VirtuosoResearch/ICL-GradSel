@@ -29,7 +29,7 @@ class args:
     log_file = None
 
     task = None
-    dataset = "glue-rte"
+    dataset = "poem_sentiment"
     k = 3
     seed = "42"
     device = 1
@@ -219,7 +219,7 @@ options = [dp["options"].index(dp["output"])]
 # %%
 accuracies = []
 args.k = 3 # select three labeled
-otherdata_k = 3 
+otherdata_k = 2
 num_trials = 1
 
 all_tasks = ["climate_fever", "glue-mrpc", "glue-rte", "glue-wnli", "poem_sentiment", "superglue-cb"]
