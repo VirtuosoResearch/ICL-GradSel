@@ -111,7 +111,7 @@ class MetaICLData(object):
 
         def run_a_forward_pass(input_tokens, output_tokens, tokenizer):
             encoded = prepro_sentence_pair_single(
-                        input_tokens, output_tokens, max_length=1024, bos_token_id=tokenizer.bos_token_id, eos_token_id=tokenizer.eos_token_id,
+                        input_tokens, output_tokens, max_length=1024, tokenizer=self.tokenizer, bos_token_id=tokenizer.bos_token_id, eos_token_id=tokenizer.eos_token_id,
                         allow_truncation=self.use_demonstrations
                 )
             input_ids = torch.LongTensor([encoded[0]])
@@ -298,7 +298,7 @@ class MetaICLData(object):
                 if self.use_demonstrations:
                     inputs_ = demonstrations + inputs_
                 encoded = prepro_sentence_pair_single(
-                    inputs_, outputs_, self.max_length, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
+                    inputs_, outputs_, self.max_length, self.tokenizer, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
                     allow_truncation=self.use_demonstrations
                 )
                 input_ids.append(encoded[0])
@@ -574,7 +574,7 @@ class MetaICLData(object):
                 if self.use_demonstrations:
                     inputs_ = demonstrations + inputs_
                 encoded = prepro_sentence_pair_single(
-                    inputs_, outputs_, self.max_length, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
+                    inputs_, outputs_, self.max_length,  self.tokenizer, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
                     allow_truncation=self.use_demonstrations
                 )
                 input_ids.append(encoded[0])
@@ -645,42 +645,23 @@ class MetaICLData(object):
             if self.method=="direct":
                 if not is_first:
                     if no_input:
-                        dp["input"] = "\n\n" + dp["input"]
+                        dp["input"] = "\n" + dp["input"]
                     else:
-                        dp["input"] = "\n\n\n" + dp["input"]
+                        dp["input"] = "\n" + dp["input"]
                 if not no_label:
                     dp["output"] = "\n" + dp["output"]
                     if "options" in dp:
                         dp["options"] = ["\n" + opt for opt in dp["options"]]
             elif self.method=="channel":
                 if not is_first:
-                    dp["output"] = "\n\n\n" + dp["output"]
+                    dp["output"] = "\n" + dp["output"]
                     if "options" in dp:
-                        dp["options"] = ["\n\n\n" + opt for opt in dp["options"]]
+                        dp["options"] = ["\n" + opt for opt in dp["options"]]
                 if not no_input:
                     if not no_label:
                         dp["input"] = "\n" + dp["input"]
             else:
                 raise NotImplementedError()
-        # else:
-        #     print("2222222222222")
-        #     if not is_first:
-        #         if self.method=="direct":
-        #             dp["input"] = " " + dp["input"]
-        #         elif self.method=="channel":
-        #             dp["output"] = " " + dp["output"]
-        #             if "options" in dp:
-        #                 dp["options"] = [" "+opt for opt in dp["options"]]
-        #         else:
-        #             raise NotImplementedError()
-        #     if self.method=="direct":
-        #         dp["output"] = " " + dp["output"]
-        #         if "options" in dp:
-        #             dp["options"] = [" " + opt for opt in dp["options"]]
-        #     elif self.method=="channel":
-        #         dp["input"] = " " + dp["input"]
-        #     else:
-        #         raise NotImplementedError()
 
         input_tokens = self.tokenizer(dp["input"])["input_ids"]
 
@@ -775,7 +756,6 @@ class MetaICLData(object):
         metadata = []
 
         for dp_idx, dp in enumerate(val_data):
-            # print("dp : ",dp)
             inputs, outputs, answer = self._prepro_each_datapoint(
                 dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
             # print("*********** seperate ***********")
@@ -791,7 +771,8 @@ class MetaICLData(object):
                     input_, output_ = self._prepro_each_datapoint(
                         neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
                     demonstrations += input_ + output_
-
+                #print(demonstrations)
+            #print(a)
             indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
             # print("indices : ",indices)
             # print("inputs : ",inputs)
@@ -801,15 +782,21 @@ class MetaICLData(object):
             metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
 
             for inputs_, outputs_ in zip(inputs, outputs):
+
                 if self.use_demonstrations:
                     inputs_ = demonstrations + inputs_
                 encoded = prepro_sentence_pair_single(
-                    inputs_, outputs_, self.max_length, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
+                    inputs_, outputs_, self.max_length, self.tokenizer,self.tokenizer.bos_token_id, self.tokenizer.eos_token_id, 
                     allow_truncation=self.use_demonstrations
                 )
                 input_ids.append(encoded[0])
                 attention_mask.append(encoded[1])
                 token_type_ids.append(encoded[2])
+            #text1 = self.tokenizer.decode(input_ids[-2])
+            #text2 = self.tokenizer.decode(input_ids[-1])
+            #print("text1 : ",text1)
+            #print("text2 : ",text2)
+            
 
         self.tensorized_inputs = dict(input_ids=torch.LongTensor(input_ids),
                                       attention_mask=torch.LongTensor(attention_mask),
@@ -981,7 +968,7 @@ class MetaICLData(object):
                 if self.use_demonstrations:
                     inputs_ = demonstrations + inputs_
                 encoded = prepro_sentence_pair_single(
-                    inputs_, outputs_, self.max_length, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
+                    inputs_, outputs_, self.max_length, self.tokenizer, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
                     allow_truncation=self.use_demonstrations
                 )
                 input_ids.append(encoded[0])
@@ -1163,7 +1150,7 @@ class MetaICLData(object):
                 if self.use_demonstrations:
                     inputs_ = demonstrations + inputs_
                 encoded = prepro_sentence_pair_single(
-                    inputs_, outputs_, self.max_length, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
+                    inputs_, outputs_, self.max_length, self.tokenizer, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
                     allow_truncation=self.use_demonstrations
                 )
                 input_ids.append(encoded[0])
@@ -1431,7 +1418,7 @@ class MetaICLData(object):
                 if self.use_demonstrations:
                     inputs_ = demonstrations + inputs_
                 encoded = prepro_sentence_pair_single(
-                    inputs_, outputs_, self.max_length, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
+                    inputs_, outputs_, self.max_length, self.tokenizer, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
                     allow_truncation=self.use_demonstrations
                 )
                 input_ids.append(encoded[0])
@@ -1539,7 +1526,7 @@ class MetaICLData(object):
                 if self.use_demonstrations:
                     inputs_ = demonstrations + inputs_
                 encoded = prepro_sentence_pair_single(
-                    inputs_, outputs_, self.max_length, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
+                    inputs_, outputs_, self.max_length, self.tokenizer, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
                     allow_truncation=self.use_demonstrations
                 )
                 input_ids.append(encoded[0])
@@ -1614,7 +1601,7 @@ class MetaICLData(object):
                     inputs_ = demonstrations + inputs_
 
                 encoded = prepro_sentence_pair_single(
-                    inputs_, outputs_, self.max_length, bos_token_id, eos_token_id,
+                    inputs_, outputs_, self.max_length, self.tokenizer, bos_token_id, eos_token_id,
                     allow_truncation=self.use_demonstrations)
 
                 input_ids.append(encoded[0])
@@ -1818,7 +1805,7 @@ class MetaICLData(object):
     #                                   token_type_ids=torch.LongTensor(token_type_ids))
     #     self.metadata = metadata
 
-def prepro_sentence_pair_single(ids1, ids2, max_length,
+def prepro_sentence_pair_single_(ids1, ids2, max_length,
                                 bos_token_id, eos_token_id,
                                 allow_truncation=False):
 
@@ -1828,19 +1815,55 @@ def prepro_sentence_pair_single(ids1, ids2, max_length,
 
     n_mask = max_length-len(ids1)-len(ids2)
     assert n_mask>=0, (max_length, len(ids1), len(ids2))
-    input_ids = ids1+ids2+[0 for _ in range(n_mask)]
-    attention_mask = [1 for _ in ids1+ids2] + [0 for _ in range(n_mask)]
-    token_type_ids = [0 for _ in ids1] + [1 for _ in ids2] + [0 for _ in range(n_mask)]
+    input_ids = ids1+ids2 + [eos_token_id for _ in range(n_mask)]
+    #print("input_ids : ",len(input_ids))
+    attention_mask = [1 for _ in ids1+ids2] + [eos_token_id for _ in range(n_mask)]
+    token_type_ids = [0 for _ in ids1] + [1 for _ in ids2] + [eos_token_id for _ in range(n_mask)]
+
     return input_ids, attention_mask, token_type_ids
 
-def prepro_sentence_pair(train_inputs, test_inputs, max_length,
+def prepro_sentence_pair_single(ids1, ids2, max_length,
+                                tokenizer, bos_token_id, eos_token_id,
+                                allow_truncation=False):
+    # Remove special tokens
+    special_ids = set(tokenizer.all_special_ids)
+    ids1 = [i for i in ids1 if i not in special_ids]
+    ids2 = [i for i in ids2 if i not in special_ids]
+
+    # Add bos and eos tokens later, so leave space for them
+    total_len = len(ids1) + len(ids2) + 2  # +2 for bos and eos
+
+    if allow_truncation and total_len > max_length:
+        # Truncate from the beginning of ids1
+        overflow = total_len - max_length
+        ids1 = ids1[overflow:]
+        total_len = len(ids1) + len(ids2) + 2
+        assert total_len == max_length
+
+    # Add bos at start, eos at end
+    input_ids = [bos_token_id] + ids1 + ids2 + [eos_token_id]
+
+    # Padding if needed
+    n_pad = max_length - len(input_ids)
+    input_ids += [eos_token_id] * n_pad
+
+    # Attention mask: 1 for tokens, 0 for padding (if padding is eos_token)
+    attention_mask = [1] * (len(input_ids) - n_pad) + [0] * n_pad
+
+    # Token type ids: 0 for ids1, 1 for ids2, 0 for bos and eos (you can adjust this)
+    token_type_ids = [0] + [0] * len(ids1) + [1] * len(ids2) + [0] + [0] * n_pad
+
+    return input_ids, attention_mask, token_type_ids
+
+
+def prepro_sentence_pair(train_inputs, test_inputs, max_length, tokenizer, 
                          bos_token_id, eos_token_id,
                          allow_truncation=False):
     input_ids, attention_mask, token_type_ids = [], [], []
     for test_input in test_inputs:
         for train_input in train_inputs:
             _input_ids, _attention_mask, _token_type_ids = \
-                prepro_sentence_pair_single(train_input, test_input, max_length,
+                prepro_sentence_pair_single(train_input, test_input, max_length, tokenizer, 
                                             bos_token_id, eos_token_id,
                                             allow_truncation=allow_truncation)
             input_ids.append(_input_ids)

@@ -10,7 +10,7 @@ import torch
 import torch.nn.functional as F
 
 from tqdm import tqdm
-from transformers import Adafactor, AdamW, get_linear_schedule_with_warmup
+#from transformers import Adafactor, AdamW, get_linear_schedule_with_warmup
 from transformers import AutoModelForCausalLM
 from transformers import BitsAndBytesConfig
 
@@ -130,6 +130,7 @@ class MetaICLModel(object):
         dataloader = data.get_dataloader(batch_size, is_training=False)
         # self.logger.info(f"len(dataloader) : {len(dataloader)}")
         losses = []
+        n = 0
         for batch in tqdm(dataloader):
             input_ids=batch[0].cuda()
             attention_mask=batch[1].cuda()
@@ -141,16 +142,20 @@ class MetaICLModel(object):
             input_ids = input_ids.to(self.device)
             attention_mask = attention_mask.to(self.device)
             token_type_ids = token_type_ids.to(self.device)
-            
+            text = data.tokenizer.decode(input_ids[0])
+
             with torch.no_grad():
                 loss = self.run_model(input_ids, attention_mask, token_type_ids, labels=labels)
+            print(loss)
             losses += loss.cpu().detach().numpy().tolist()
+
         return losses
 
     def do_predict(self, data, batch_size=4, losses=None, verbose=False):
         if losses is None:
             losses = self.do_inference(data, batch_size, verbose=verbose)
         losses = np.array(losses)
+
         assert len(losses)==len(data)
         predictions = []
         for idx, dp in enumerate(data.metadata):
@@ -165,14 +170,17 @@ class MetaICLModel(object):
 
     def run_model(self, input_ids, attention_mask, token_type_ids, labels=None):
         outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
-        logits = outputs.logits[..., :-1, :].contiguous()
 
+        logits = outputs.logits[..., :-1, :].contiguous()
+        #print(logits.shape)
+        #print(labels.shape)
         if labels is None:
             labels = input_ids
         labels = labels[..., 1:].contiguous()
         label_mask = token_type_ids[..., 1:].contiguous()
 
         loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
+        #print(loss_fct.shape)
         losses = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1)) # [batch_size, length]
 
         losses = losses.view(logits.size(0), logits.size(1)) * label_mask
