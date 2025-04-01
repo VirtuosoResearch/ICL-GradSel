@@ -146,7 +146,7 @@ class MetaICLModel(object):
 
             with torch.no_grad():
                 loss = self.run_model(input_ids, attention_mask, token_type_ids, labels=labels)
-            print(loss)
+
             losses += loss.cpu().detach().numpy().tolist()
 
         return losses
