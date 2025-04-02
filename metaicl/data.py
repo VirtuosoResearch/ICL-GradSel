@@ -334,7 +334,7 @@ class MetaICLData(object):
         target_token = output_ids
         loss = -log_probs[target_token]
         
-        flops, params = profile(metaicl_model.model, inputs=(input_ids,))
+        if self.is_flops: flops, params = profile(metaicl_model.model, inputs=(input_ids,))
         if self.is_flops: self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
         
         loss.backward()
@@ -542,8 +542,12 @@ class MetaICLData(object):
 
         total_flops+= flops
 
+        self.logger.info("******************")
         for i, neighbor_dp in enumerate(ground):
-            demonstrations+=self.tokenizer("Input: " + neighbor_dp["input"] + " " + "Label: "+neighbor_dp["output"])["input_ids"]
+            # self.logger.info(f"neighbor_dp : {neighbor_dp}")
+            formulate = "Input: " + neighbor_dp["input"] + " " + "Label: "+neighbor_dp["output"]
+            self.logger.info(f"formulate : {formulate}")
+            demonstrations+=self.tokenizer(formulate)["input_ids"]
 
         cnt=0
         
@@ -666,6 +670,7 @@ class MetaICLData(object):
         input_tokens = self.tokenizer(dp["input"])["input_ids"]
 
         if is_training or for_demonstrations:
+            
             output_tokens = self.tokenizer(dp["output"])["input_ids"]
             if "task" in dp:
                 if (dp["task"].startswith("inst:piqa") or dp["task"].startswith("inst:yahoo_answers_topics")) and \
