@@ -136,6 +136,7 @@ class MetaICLData(object):
         self.is_null = False
         self.is_flops = is_flops
 
+        #print(tokenizer)
 
         if self.tokenizer is None:
             from transformers import AutoTokenizer
@@ -190,7 +191,7 @@ class MetaICLData(object):
             return input_ids, results.cpu().detach().item(), flops
 
         option_tokens = [tokenizer(option)["input_ids"] for option in dp['options']]
-        input_tokens = tokenizer("Input: " + dp["input"] + " " + "Label:")["input_ids"]
+        input_tokens = tokenizer("Input: " + dp["input"] + " ")["input_ids"]
         metaicl_model.model.eval()
         # metaicl_model.model.to(device)
 
@@ -695,6 +696,94 @@ class MetaICLData(object):
 
         return best_demonstrations, best_candidate_accuracy, total_flops
     
+    def greedy_select_subset4(self, gpt2, metaicl_model, test_data, dev_data):
+        def get_length(example, prompt_text, options):
+            return max(len(prompt_text + example["input"] + op + "\n") for op in options)
+        def get_max_tokenized_length(tokenizer, test_data, prompt_text, options):
+            max_len = 0
+            for example in test_data:
+                for op in options:
+                    full_text = prompt_text + example["input"] + op + "\n"
+                    input_ids = tokenizer(full_text, return_tensors="pt", truncation=False)["input_ids"]
+                    max_len = max(max_len, input_ids.size(1))
+            return max_len
+        self.options = test_data[0]["options"]
+        
+        selected_indices, best_demonstrations = [], []
+        device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
+
+
+        total_flops = 0
+        prompt_text = ""
+        # ramdom select
+        while len(selected_indices) < 3:
+            random_index = random.randint(0, len(test_data)-1)
+            selected_indices.append(random_index)
+            prompt_text += test_data[random_index]["input"] + test_data[random_index]["output"]+"\n"
+            best_demonstrations.append(test_data[random_index])
+    
+        print(len(selected_indices))
+
+        while len(selected_indices) < self.k:
+            max_token_len = get_max_tokenized_length(self.tokenizer, test_data, prompt_text, self.options)
+            # Contruct input for different options
+            
+            #base_index = next(i for i in range(len(test_data)) if i not in selected_indices)
+            base_index = max(
+                (i for i in range(len(test_data)) if i not in selected_indices),
+                key=lambda i: get_length(test_data[i], prompt_text, self.options)
+            )
+            base_example = test_data[base_index]
+            # print(f"test_data[base_index] : {test_data[base_index]}")
+            base_text_option_dict = {}
+            loss_option_dict, gradient_option_dict = {}, {}
+            for op in self.options:
+                #base_text = "Input: " + base_example["input"]+ op +"\n"
+                base_text = prompt_text + base_example["input"]+ op +"\n"
+                base_text_option_dict[op] = base_text
+
+                # get loss and gradient
+                loss_op, embedding_grad_op = _get_embedding_loss(model=metaicl_model, tokenizer=self.tokenizer, input_texts=[base_text], pad_to_length=max_token_len)
+
+                #print(loss_op)
+                #print(embedding_grad_op)
+                loss_option_dict[op] = loss_op
+                gradient_option_dict[op] = embedding_grad_op
+
+            best_candidate = base_index
+            best_candidate_loss = loss_option_dict[base_example["output"]].cpu().item()
+            for i, candidate_sample in tqdm(enumerate(test_data), total=len(test_data), leave=True, position=0):
+                if (i in selected_indices) or (i == base_index): 
+                    continue
+                candidate_approx_loss_dict = {}
+                for op in self.options:
+                    #candidate_str = "Input: " + candidate_sample["input"] + candidate_sample["output"]+"\n"
+                    candidate_text =  prompt_text + candidate_sample["input"] + op +"\n"
+
+                    delta_P = self.compute_embedding_difference(gpt2, metaicl_model, base_str=base_text_option_dict[op], candidate_str=candidate_text, pad_to_length=max_token_len)
+                    #print(gradient_option_dict[op].shape)
+                    #print(delta_P.shape)
+                    taylor_correction = torch.sum(gradient_option_dict[op] * delta_P).item()
+                    taylor_approx_loss = loss_option_dict[op] + taylor_correction
+                    candidate_approx_loss_dict[op] = taylor_approx_loss
+                
+                candidate_approx_loss = candidate_approx_loss_dict[candidate_sample["output"]].cpu().item()
+                if candidate_approx_loss < best_candidate_loss:
+                    best_candidate = i
+                    best_candidate_loss = candidate_approx_loss
+                #print(f"candidate_approx_loss : {candidate_approx_loss}")
+
+                
+            self.logger.info("-------------one loop done--------------")
+            selected_indices.append(best_candidate)
+            #best_input_str += "Input: " + test_data[best_candidate]["input"] + " Label: " + test_data[best_candidate]["output"]+"\n"
+            prompt_text += test_data[best_candidate]["input"] + test_data[best_candidate]["output"]+"\n"
+            best_demonstrations.append(test_data[best_candidate])
+            best_candidate_accuracy = 0
+            self.logger.info(f"Selected index {best_candidate}")
+
+        return best_demonstrations, best_candidate_accuracy, total_flops
+    
     def _select_top_k_neighbors(self, test_sample_embedding, test_embeddings, test_data, k, dp_idx):
         similarities = []
         for idx, dp in enumerate(test_embeddings):
@@ -768,13 +857,13 @@ class MetaICLData(object):
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
         
-        ground, _, flops = self.greedy_select_subset3(gpt2=gpt2, metaicl_model=metaicl_model, test_data=test_data, dev_data=psudo_data)
+        ground, _, flops = self.greedy_select_subset4(gpt2=gpt2, metaicl_model=metaicl_model, test_data=test_data, dev_data=psudo_data)
         demonstrations = []
 
         total_flops+= flops
 
         for i, neighbor_dp in enumerate(ground):
-            demonstrations+=self.tokenizer("Input: " + neighbor_dp["input"] + " " + "Label: "+neighbor_dp["output"] + "\n")["input_ids"]
+            demonstrations+=self.tokenizer("Input: " + neighbor_dp["input"] + " " +neighbor_dp["output"] + "\n")["input_ids"]
 
         cnt=0
         
@@ -866,7 +955,7 @@ class MetaICLData(object):
         total_flops+= flops
 
         for i, neighbor_dp in enumerate(ground):
-            demonstrations+=self.tokenizer("Input: " + neighbor_dp["input"] + " " + "Label: "+neighbor_dp["output"] + "\n")["input_ids"]
+            demonstrations+=self.tokenizer("Input: " + neighbor_dp["input"] + " " +neighbor_dp["output"] + "\n")["input_ids"]
 
         cnt=0
         
@@ -2147,6 +2236,7 @@ def prepro_sentence_pair_single(ids1, ids2, max_length,
                                 tokenizer, bos_token_id, eos_token_id,
                                 allow_truncation=False):
     # Remove special tokens
+    #print(tokenizer.all_special_ids)
     special_ids = set(tokenizer.all_special_ids)
     ids1 = [i for i in ids1 if i not in special_ids]
     ids2 = [i for i in ids2 if i not in special_ids]
