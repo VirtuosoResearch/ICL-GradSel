@@ -12,13 +12,13 @@ import torch.nn.functional as F
 from tqdm import tqdm
 #from transformers import Adafactor, AdamW, get_linear_schedule_with_warmup
 from transformers import AutoModelForCausalLM
-from transformers import BitsAndBytesConfig
+from transformers import BitsAndBytesConfig, AutoTokenizer
 
 from utils.utils import get_checkpoint_id, download_file
 
 class MetaICLModel(object):
 
-    def __init__(self, device_num, logger=None, out_dir=None, fp16=True, local_rank=-1):
+    def __init__(self, device_num, logger=None, out_dir=None, fp16=True, local_rank=-1, gpt2="deepseek-ai/deepseek-llm-7b-chat"):
         if logger is None:
             class Logger():
                 def info(self, text):
@@ -49,6 +49,7 @@ class MetaICLModel(object):
         self.model_name = None
         self.model = None
         self.mode = None
+        self.tokenizer = AutoTokenizer.from_pretrained(gpt2)
 
     def __str__(self):
         text = "[MetaICL Model]: "
@@ -108,7 +109,7 @@ class MetaICLModel(object):
             model = AutoModelForCausalLM.from_pretrained(gpt2)
         elif "gpt-j" in gpt2:
             model = AutoModelForCausalLM.from_pretrained("EleutherAI/gpt-j-6b") #/gpt2)
-        elif "Llama" in gpt2 or "opt" or "deepseek" in gpt2:
+        elif "Llama" in gpt2 or "opt" in gpt2 or "deepseek" in gpt2:
             model = AutoModelForCausalLM.from_pretrained(gpt2)
         else:
             raise NotImplementedError(checkpoint)
@@ -128,10 +129,9 @@ class MetaICLModel(object):
 
     def do_inference(self, data, batch_size=1, verbose=False):
         dataloader = data.get_dataloader(batch_size, is_training=False)
-        # self.logger.info(f"len(dataloader) : {len(dataloader)}")
         losses = []
         n = 0
-        for batch in tqdm(dataloader):
+        for idx, batch in enumerate(dataloader):
             input_ids=batch[0].cuda()
             attention_mask=batch[1].cuda()
             token_type_ids=batch[2].cuda()
@@ -143,7 +143,6 @@ class MetaICLModel(object):
             attention_mask = attention_mask.to(self.device)
             token_type_ids = token_type_ids.to(self.device)
             text = data.tokenizer.decode(input_ids[0])
-
             with torch.no_grad():
                 loss = self.run_model(input_ids, attention_mask, token_type_ids, labels=labels)
 
