@@ -97,7 +97,7 @@ def main(args):
         # log_probs = F.log_softmax(output_logits[0, last_token_idx, :], dim=-1)
         # loss = -log_probs[tokens_output]
         # loss.backward()
-        selected_logit = output_logits[0, last_token_idx, tokens_output.item()]
+        selected_logit = -output_logits[0, last_token_idx, tokens_output.item()]
         gradient = torch.autograd.grad(selected_logit, embedding_input, retain_graph=False, create_graph=False)[0]
 
         anchor_losses[option] = selected_logit.item()
@@ -132,7 +132,7 @@ def main(args):
             # log_probs = F.log_softmax(output_logits[0, last_token_idx, :], dim=-1)
             # loss = -log_probs[tokens_output]
             # loss.backward()
-            selected_logit = output_logits[0, last_token_idx, tokens_output.item()]
+            selected_logit = -output_logits[0, last_token_idx, tokens_output.item()]
             gradient = torch.autograd.grad(selected_logit, embedding_input, retain_graph=False, create_graph=False)[0]
 
             dp_loss[option] = selected_logit.item()
@@ -168,9 +168,15 @@ def main(args):
                     embedding_dp_option = model.model.embed_tokens(input_ids)
 
             delta_P = embedding_dp_option - anchor_embedding_input
+            # delta_P_norm = torch.norm(delta_P).item()
+            # dp_norm = torch.norm(embedding_dp_option).item()
+            # anchor_norm = torch.norm(anchor_embedding_input).item()
+            # print("mean_norm: ", delta_P_norm)
+            # print("norm_rate: ",delta_P_norm/max(dp_norm, anchor_norm))
+
             taylor_correction = torch.sum(anchor_gradients[option] * delta_P).item()
             estimated_loss = anchor_losses[option] + taylor_correction
-
+            # print(f"anchor_gradients.size: {anchor_gradients[option].shape}; delta_P.size: {delta_P.shape}")
             option_losses.append(estimated_loss)
 
         predicted_option_idx = np.argmin(option_losses)
