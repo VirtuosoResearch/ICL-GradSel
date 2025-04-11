@@ -32,19 +32,31 @@ def main(args):
 
     model.eval()
     tokenizer.pad_token = tokenizer.eos_token
+    if "CodeLlama" in model_name:
+        tokenizer.padding_side = 'right'
+    
+    print("tokenizer.padding_side: ",tokenizer.padding_side)
+
     model.resize_token_embeddings(len(tokenizer))
 
     test_data = load_data(None, "test", 3, seed=42, config_split="test",
                         datasets=[dataset_name], is_null=False)
 
     if len(test_data)>1000: test_data = test_data[:1000]
+    
+    instructions = f"Here are {len(test_data[0]['options'])} options: "
+    for option in test_data[0]["options"]: instructions+=option+", "
+    instructions+="You should choose one of them to answer after 'Output: '. \n"
+    init = instructions
 
-    init = ""
     random.seed(args.seed)
     random_numbers = random.sample(range(len(test_data)), args.k)
+    if args.k>0:
+        init+= f"Here are {args.k} samples for your reference. \n"
     for i in random_numbers:
         init+="Input: " + test_data[i]["input"]+" Output: "+test_data[i]["output"]+"\n"
 
+    init+="Here is the query to answer: \n"
 
     anchor_dp = test_data[0]
 
@@ -79,21 +91,22 @@ def main(args):
 
         embedding_input = embedding_input.to(model.dtype)  
         output_logits = model(inputs_embeds=embedding_input, attention_mask=attention_mask).logits
-        # last_token_idx = tokens_input.shape[1] - 1
         last_token_idx = attention_mask.sum(dim=1).item()-1
         print("last_token_idx: ",last_token_idx)
         print("output: ", tokenizer.decode(torch.argmax(output_logits[0,last_token_idx,:])))
-        log_probs = F.log_softmax(output_logits[0, last_token_idx, :], dim=-1)
+        # log_probs = F.log_softmax(output_logits[0, last_token_idx, :], dim=-1)
+        # loss = -log_probs[tokens_output]
+        # loss.backward()
+        selected_logit = output_logits[0, last_token_idx, tokens_output.item()]
+        gradient = torch.autograd.grad(selected_logit, embedding_input, retain_graph=False, create_graph=False)[0]
 
-        loss = -log_probs[tokens_output]
-        loss.backward()
-
-        anchor_losses[option] = loss.item()
-        anchor_gradients[option] = embedding_input.grad.clone().detach()
+        anchor_losses[option] = selected_logit.item()
+        anchor_gradients[option] = gradient.detach()
 
     dp_label = []
     dp_loss_all = []
     dp_loss, dp_gradients = {}, {}
+    # exit()
     for dp in tqdm(test_data[1:]):
         for option in dp["options"]:
             input_tokens =init+ "Input: " + dp["input"] + " Output: "
@@ -116,13 +129,14 @@ def main(args):
 
             output_logits = model(inputs_embeds=embedding_input, attention_mask=attention_mask).logits
             last_token_idx = attention_mask.sum(dim=1).item()-1
-            log_probs = F.log_softmax(output_logits[0, last_token_idx, :], dim=-1)
+            # log_probs = F.log_softmax(output_logits[0, last_token_idx, :], dim=-1)
+            # loss = -log_probs[tokens_output]
+            # loss.backward()
+            selected_logit = output_logits[0, last_token_idx, tokens_output.item()]
+            gradient = torch.autograd.grad(selected_logit, embedding_input, retain_graph=False, create_graph=False)[0]
 
-            loss = -log_probs[tokens_output]
-            loss.backward()
-
-            dp_loss[option] = loss.item()
-            dp_gradients[option] = embedding_input.grad.clone().detach()
+            dp_loss[option] = selected_logit.item()
+            dp_gradients[option] = gradient.detach()
             predicted_dp_idx = np.argmin(dp_loss)
 
             dp_loss_all.append(dp_loss)
