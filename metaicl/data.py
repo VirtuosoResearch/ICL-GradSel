@@ -141,6 +141,8 @@ class MetaICLData(object):
         if self.tokenizer is None:
             from transformers import AutoTokenizer
             self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        if self.tokenizer.padding_side == "left":
+            self.tokenizer.padding_side = "right"
 
     def __len__(self):
         if self.tensorized_inputs is None:
@@ -1321,7 +1323,7 @@ class MetaICLData(object):
                 for i, neighbor_dp in enumerate(top_k_neighbors):
                     input_, output_ = self._prepro_each_datapoint(
                         neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
-                    demonstrations += input_ + output_
+                    demonstrations += input_[1:] + output_[1:]
                 #print(demonstrations)
             #print(a)
             indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
@@ -1335,9 +1337,9 @@ class MetaICLData(object):
             for inputs_, outputs_ in zip(inputs, outputs):
 
                 if self.use_demonstrations:
-                    inputs_ = demonstrations + inputs_
+                    inputs_ = demonstrations + inputs_[1:]
                 encoded = prepro_sentence_pair_single(
-                    inputs_, outputs_, self.max_length, self.tokenizer,self.tokenizer.bos_token_id, self.tokenizer.eos_token_id, 
+                    inputs_, [outputs_[2]], self.max_length, self.tokenizer,self.tokenizer.bos_token_id, self.tokenizer.eos_token_id, 
                     allow_truncation=self.use_demonstrations
                 )
                 input_ids.append(encoded[0])
@@ -1347,6 +1349,9 @@ class MetaICLData(object):
             #text2 = self.tokenizer.decode(input_ids[-1])
             #print("text1 : ",text1)
             #print("text2 : ",text2)
+            # print("*********************")
+            # print("input_ids text: \n",self.tokenizer.decode(encoded[0]))
+            # print("---------------------")
             
 
         self.tensorized_inputs = dict(input_ids=torch.LongTensor(input_ids),
@@ -2380,6 +2385,12 @@ def prepro_sentence_pair_single(ids1, ids2, max_length,
     #print(tokenizer.all_special_ids)
     special_ids = set(tokenizer.all_special_ids)
     #special_ids.extend([128000, 128001])
+    # print("************************")
+    # print("ids1: ",ids1)
+    # print("decode(ids1): ",tokenizer.decode(ids1))
+    # print("ids2: ",ids2)
+    # print("decode(ids2): ",tokenizer.decode(ids2))
+
     ids1 = [i for i in ids1 if i not in special_ids]
     ids2 = [i for i in ids2 if i not in special_ids]
 
@@ -2406,6 +2417,9 @@ def prepro_sentence_pair_single(ids1, ids2, max_length,
     # Token type ids: 0 for ids1, 1 for ids2, 0 for bos and eos (you can adjust this)
     token_type_ids = [0] + [0] * len(ids1) + [1] * len(ids2) + [0] + [0] * n_pad
 
+    # print("input_ids: ",input_ids)
+    # print("tokenizer.decode(input_ids): ",tokenizer.decode(input_ids))
+    # print("------------------------")
     return input_ids, attention_mask, token_type_ids
 
 
