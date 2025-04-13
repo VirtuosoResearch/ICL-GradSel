@@ -141,6 +141,8 @@ class MetaICLData(object):
         if self.tokenizer is None:
             from transformers import AutoTokenizer
             self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        if self.tokenizer.padding_side == "left":
+            self.tokenizer.padding_side = "right"
 
     def __len__(self):
         if self.tensorized_inputs is None:
@@ -1308,7 +1310,7 @@ class MetaICLData(object):
                 for i, neighbor_dp in enumerate(top_k_neighbors):
                     input_, output_ = self._prepro_each_datapoint(
                         neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
-                    demonstrations += input_ + output_
+                    demonstrations += input_[1:] + output_[1:]
                 #print(demonstrations)
             #print(a)
             indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
@@ -1322,9 +1324,9 @@ class MetaICLData(object):
             for inputs_, outputs_ in zip(inputs, outputs):
 
                 if self.use_demonstrations:
-                    inputs_ = demonstrations + inputs_
+                    inputs_ = demonstrations + inputs_[1:]
                 encoded = prepro_sentence_pair_single(
-                    inputs_, outputs_, self.max_length, self.tokenizer,self.tokenizer.bos_token_id, self.tokenizer.eos_token_id, 
+                    inputs_, [outputs_[2]], self.max_length, self.tokenizer,self.tokenizer.bos_token_id, self.tokenizer.eos_token_id, 
                     allow_truncation=self.use_demonstrations
                 )
                 input_ids.append(encoded[0])
@@ -1334,6 +1336,9 @@ class MetaICLData(object):
             #text2 = self.tokenizer.decode(input_ids[-1])
             #print("text1 : ",text1)
             #print("text2 : ",text2)
+            # print("*********************")
+            # print("input_ids text: \n",self.tokenizer.decode(encoded[0]))
+            # print("---------------------")
             
 
         self.tensorized_inputs = dict(input_ids=torch.LongTensor(input_ids),
@@ -2174,175 +2179,6 @@ class MetaICLData(object):
         if self.local_rank<=0:
             self.logger.info(text)
 
-
-
-    # def tensorize_unlabeled(self, gpt2, _test_data, _val_data, m, options=None, add_newlines=True):
-    #     val_data, test_data, unlab_data =  [], [], []
-    #     cut_point = len(_test_data)-len(_test_data)//4
-    #     for idx, dp in enumerate(_test_data):
-    #         if "output" not in dp: dp["output"] = dp["options"][0]
-    #         if idx < cut_point: test_data.append(dp.copy())
-    #         else: unlab_data.append(dp.copy())
-    #     for dp in _val_data:
-    #         if "output" not in dp: dp["output"] = dp["options"][0]
-    #         val_data.append(dp.copy())
-    #     task = _test_data[0]["task"]
-    #     test_features_path = f"./features/{task}_test_features.json"
-    #     with open(test_features_path, "r") as file:
-    #         test_features = json.load(file)
-    #     val_features_path = f"./features/{task}_val_features.json"
-    #     with open(val_features_path, "r") as file:
-    #         val_features = json.load(file)
-
-    #     input_ids, attention_mask, token_type_ids = [], [], []
-    #     metadata = []
-    #     if self.use_demonstrations:
-    #         test_texts = [dp["input"] + " " + dp["output"] for dp in test_data]
-    #         test_labels = [dp["output"] for dp in test_data]
-
-    #     all_indices = [i for i in range(len(test_data))]
-    #     # print(all_indices)
-    #     similarities = [0 for i in range(len(test_data))]
-    #     forsel, _ = self._forward_selection(
-    #         embeddings=test_features,
-    #         top_k_indices=all_indices,
-    #         m=m, 
-    #         candidate_labels=test_labels, 
-    #         test_data=test_data,
-    #         similarities = similarities,
-    #         seed=42
-    #     )
-    #     demonstration,psu_data = [], []
-    #     for dp in forsel:
-    #         demonstration+=self.tokenizer("Input: " + dp["input"] + " " + "Label: "+dp["output"])["input_ids"]
-    #     for idx, dp in enumerate(unlab_data):
-    #         used = dp["output"]
-    #         _, dp["output"]= self.forward(gpt2, demonstration,dp,dp["task"])
-    #         self.logger.info(used+" ;;; "+dp["output"])
-    #         psu_data.append(dp)
-
-    #     for dp in psu_data:
-    #         test_data.append(dp)
-    #     test_labels = [dp["output"] for dp in test_data]
-    #     # print("len(test_data) : ",len(test_data))
-
-    #     for dp_idx, dp in enumerate(val_data):
-    #         inputs, outputs, answer = self._prepro_each_datapoint(
-    #             dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
-
-    #         if self.use_demonstrations:
-    #             test_text = dp["input"]
-    #             dp_feature = val_features[dp_idx]            
-
-    #             top_k_neighbors, top_k_indices, similarities = self._select_top_k_neighbors(
-    #                 dp_feature, test_features, test_data, self.k, len(test_data)+1
-    #             )
-
-    #             forsel, _ = self._forward_selection(
-    #                 embeddings=test_features,
-    #                 top_k_indices=top_k_indices,
-    #                 m=m, 
-    #                 candidate_labels=test_labels, 
-    #                 test_data=test_data,
-    #                 similarities = similarities,
-    #                 seed=42
-    #             )
-
-    #             demonstrations = []
-    #             for i, neighbor_dp in enumerate(forsel):
-    #                 input_, output_ = self._prepro_each_datapoint(
-    #                     neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
-    #                 demonstrations += input_ + output_
-
-    #         indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
-
-    #         metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
-
-    #         for inputs_, outputs_ in zip(inputs, outputs):
-    #             if self.use_demonstrations:
-    #                 inputs_ = demonstrations + inputs_
-    #             encoded = prepro_sentence_pair_single(
-    #                 inputs_, outputs_, self.max_length, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
-    #                 allow_truncation=self.use_demonstrations
-    #             )
-    #             input_ids.append(encoded[0])
-    #             attention_mask.append(encoded[1])
-    #             token_type_ids.append(encoded[2])
-
-    #     self.tensorized_inputs = dict(input_ids=torch.LongTensor(input_ids),
-    #                                   attention_mask=torch.LongTensor(attention_mask),
-    #                                   token_type_ids=torch.LongTensor(token_type_ids))
-    #     self.metadata = metadata
-
-
-
-    # def tensorize_ground(self, gpt2, _test_data, _val_data, options=None, add_newlines=True):
-    #     print("options: ", options)
-    #     if options is not None:
-    #         print("len(_test_data) : ", len(_test_data))
-    #         print(_test_data[0])
-    #         for i, dp in enumerate(_test_data):
-    #             assert "options" not in dp,print(i,dp)
-    #             _test_data[i] = {"input": dp, "options": options}
-    #         for i, dp in enumerate(_val_data):
-    #             assert "options" not in dp
-    #             _val_data[i] = {"input": dp, "options": options}
-    #     print("len(_test_data) : ",len(_test_data))
-    #     print("len(_val_data) : ", len(_val_data))
-
-    #     val_data, dev_data, test_data = [], [], []
-    #     for dp in _test_data:
-    #         if "output" not in dp: dp["output"] = dp["options"][0]
-    #         test_data.append(dp.copy())
-    #     for idx, dp in enumerate(_val_data):
-    #         if "output" not in dp: dp["output"] = dp["options"][0]
-    #         if idx<= len(_val_data)//2: val_data.append(dp.copy())
-    #         else: dev_data.append(dp.copy())
-    #     task = _test_data[0]["task"]
-    #     with open(f"./features/{task}_test_features.json", "r") as file: test_features = json.load(file)
-    #     with open(f"./features/{task}_val_features.json", "r") as file: val_features = json.load(file)
-
-    #     input_ids, attention_mask, token_type_ids = [], [], []
-    #     metadata = []
-
-    #     ground, _ = self.greedy_select_subset(gpt2=gpt2,test_data=test_data, dev_data=dev_data, subset_size=self.k)
-
-    #     for dp_idx, dp in enumerate(val_data):
-    #         inputs, outputs, answer = self._prepro_each_datapoint(
-    #             dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
-
-    #         if self.use_demonstrations:
-    #             test_text = dp["input"]
-    #             dp_feature = val_features[dp_idx]
-
-                
-    #             # def greedy_select_subset(self, test_data, dp_data, subset_size=10):
-    #             demonstrations = []
-    #             for i, neighbor_dp in enumerate(ground):
-    #                 input_, output_ = self._prepro_each_datapoint(
-    #                     neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
-    #                 demonstrations += input_ + output_
-
-    #         indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
-
-    #         metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
-
-    #         for inputs_, outputs_ in zip(inputs, outputs):
-    #             if self.use_demonstrations:
-    #                 inputs_ = demonstrations + inputs_
-    #             encoded = prepro_sentence_pair_single(
-    #                 inputs_, outputs_, self.max_length, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
-    #                 allow_truncation=self.use_demonstrations
-    #             )
-    #             input_ids.append(encoded[0])
-    #             attention_mask.append(encoded[1])
-    #             token_type_ids.append(encoded[2])
-
-    #     self.tensorized_inputs = dict(input_ids=torch.LongTensor(input_ids),
-    #                                   attention_mask=torch.LongTensor(attention_mask),
-    #                                   token_type_ids=torch.LongTensor(token_type_ids))
-    #     self.metadata = metadata
-
 def prepro_sentence_pair_single_(ids1, ids2, max_length, tokenizer,
                                 bos_token_id, eos_token_id,
                                 allow_truncation=False):
@@ -2367,6 +2203,12 @@ def prepro_sentence_pair_single(ids1, ids2, max_length,
     #print(tokenizer.all_special_ids)
     special_ids = set(tokenizer.all_special_ids)
     #special_ids.extend([128000, 128001])
+    # print("************************")
+    # print("ids1: ",ids1)
+    # print("decode(ids1): ",tokenizer.decode(ids1))
+    # print("ids2: ",ids2)
+    # print("decode(ids2): ",tokenizer.decode(ids2))
+
     ids1 = [i for i in ids1 if i not in special_ids]
     ids2 = [i for i in ids2 if i not in special_ids]
 
@@ -2393,6 +2235,9 @@ def prepro_sentence_pair_single(ids1, ids2, max_length,
     # Token type ids: 0 for ids1, 1 for ids2, 0 for bos and eos (you can adjust this)
     token_type_ids = [0] + [0] * len(ids1) + [1] * len(ids2) + [0] + [0] * n_pad
 
+    # print("input_ids: ",input_ids)
+    # print("tokenizer.decode(input_ids): ",tokenizer.decode(input_ids))
+    # print("------------------------")
     return input_ids, attention_mask, token_type_ids
 
 
