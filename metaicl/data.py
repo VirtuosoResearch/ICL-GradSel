@@ -247,29 +247,16 @@ class MetaICLData(object):
         best_demonstrations = []
 
         total_flops = 0
-
-        # while len(selected_indices) < self.k:
-        # base_index = next(i for i in range(len(test_data)) if i not in selected_indices)
-        # best_candidate = base_index
-        # best_loss, flops = self.evaluate_loss(gpt2, metaicl_model, best_demonstrations+[test_data[base_index]], dev_data, test_data[0]["task"])
-        # total_flops+=flops
-        # if self.is_flops: self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
         loss_list = []
         for i in range(len(test_data)):
-            # if (i in selected_indices) or i==base_index: continue
             candidate_demonstrations = best_demonstrations + [test_data[i]]
             candidate_loss, flops = self.evaluate_loss(gpt2, metaicl_model, candidate_demonstrations, dev_data, test_data[0]["task"])
             loss_list.append(candidate_loss)
+            total_flops+=flops
             self.logger.info(f"----------------candidate_loss : {candidate_loss}----------------")
-            # if candidate_loss < best_loss:
-            #     best_candidate = i
-            #     best_loss = candidate_loss
 
-        # selected_indices.append(best_candidate)
         loss_array = np.array(loss_list)
         selected_indices = np.argsort(loss_array)[:self.k]
-        # self.logger.info("**"*20)
-        # self.logger.info(f"selected_indices: {selected_indices}; best_candidate : {best_candidate}")
         for i in selected_indices:
             best_demonstrations.append(test_data[i])
         self.logger.info("---------best_demonstrations---------")
@@ -348,7 +335,7 @@ class MetaICLData(object):
                 test_text = dp["input"]
                 dp_feature = val_features[dp_idx]
 
-                samples, top_indices, _ = self._select_top_k_neighbors(dp_feature, test_features, test_data, k=10,dp_idx=-1)
+                samples, top_indices, _ = self._select_top_k_neighbors(dp_feature, test_features, test_data, k=12,dp_idx=-1)
 
                 ground, _, flops = self.greedy_select_condition(gpt2=gpt2, metaicl_model=metaicl_model,test_data=samples, dev_data=dev_data, subset_size=self.k)
                 total_flops+=flops
