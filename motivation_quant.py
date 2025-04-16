@@ -17,9 +17,6 @@ def estimate_loss_second_order(anchor_loss, anchor_gradient, anchor_input, dp_in
     delta_P = dp_input - anchor_input.detach()
     delta_P = delta_P.to(anchor_input.device)
 
-
-    # print("anchor_gradient.grad_fn:", anchor_gradient.grad_fn)
-    # print("anchor_input.requires_grad:", anchor_input.requires_grad)
     delta_P.requires_grad = False
     Hvs = torch.autograd.grad(
         outputs=anchor_gradient, 
@@ -27,7 +24,7 @@ def estimate_loss_second_order(anchor_loss, anchor_gradient, anchor_input, dp_in
         grad_outputs=delta_P, 
         retain_graph=True,
         create_graph=False,
-        # allow_unused=True
+        allow_unused=False
     )[0]
 
     taylor_1st = torch.sum(anchor_gradient * delta_P)
@@ -35,7 +32,7 @@ def estimate_loss_second_order(anchor_loss, anchor_gradient, anchor_input, dp_in
         print(f"[Warning] Hessian-vector product failed at option: {option}")
         taylor_2nd = torch.tensor(0.0, device=anchor_input.device)
     else:
-        taylor_2nd = 0.5 * torch.sum(Hvs * delta_P)
+        taylor_2nd = 0.5 * torch.sum(delta_P * Hvs)
 
     estimated_loss = anchor_loss + taylor_1st.item() + taylor_2nd.item()
 
@@ -111,8 +108,6 @@ def main(args):
             print("output_token: ", tokens_output)
             print("output_text: ",tokenizer.decode(tokens_output))
 
-            # last_token_idx = tokens_input.ne(tokenizer.pad_token_id).sum(dim=1) - 1
-            # print("last_token_idx : ", last_token_idx)
 
             with torch.no_grad():
                 if "gpt2" in model_name: embedding_input = model.transformer.wte(input_ids)
@@ -121,11 +116,8 @@ def main(args):
             
             # anchor_embedding_input = embedding_input.clone().detach()
             embedding_input.requires_grad = True
-            anchor_embedding_input = embedding_input
-            anchor_embedding_input.requires_grad = True
 
             print(f"embedding_input shape: {embedding_input.shape}")
-            # print(f"Max index in inputs_embeds: {embedding_input.max()}")
 
             embedding_input = embedding_input.to(model.dtype)  
             output_logits = model(inputs_embeds=embedding_input, attention_mask=attention_mask).logits
@@ -140,10 +132,7 @@ def main(args):
             
             anchor_embedding[option] = embedding_input
             anchor_losses[option] = selected_logit.item()
-            # anchor_gradients[option] = gradient.detach()
             anchor_gradients[option] = gradient
-
-            print(gradient.grad_fn)
 
         dp_label = []
         dp_loss_all = []
@@ -158,9 +147,6 @@ def main(args):
                 attention_mask = tokens_input["attention_mask"].to(device)
                 tokens_output = tokenizer(option, return_tensors="pt").input_ids[0][1].to(device)
 
-                # last_token_idx = tokens_input.ne(tokenizer.pad_token_id).sum(dim=1) - 1
-                # print("last_token_idx : ", last_token_idx)
-
                 with torch.no_grad():
                     if "gpt2" in model_name: embedding_input = model.transformer.wte(input_ids)
                     elif "opt" in model_name: embedding_input = model.model.decoder.embed_tokens(input_ids)
@@ -171,15 +157,9 @@ def main(args):
 
                 output_logits = model(inputs_embeds=embedding_input, attention_mask=attention_mask).logits
                 last_token_idx = attention_mask.sum(dim=1).item()-1
-                # log_probs = F.log_softmax(output_logits[0, last_token_idx, :], dim=-1)
-                # loss = -log_probs[tokens_output]
-                # loss.backward()
                 selected_logit = -output_logits[0, last_token_idx, tokens_output.item()]
-                # gradient = torch.autograd.grad(selected_logit, embedding_input, retain_graph=True, create_graph=True)[0]
 
                 dp_loss[option] = selected_logit.item()
-                # dp_gradients[option] = gradient.detach()
-                # dp_gradients[option] = gradient
                 predicted_dp_idx = np.argmin(dp_loss)
 
                 dp_loss_all.append(dp_loss)
@@ -210,18 +190,7 @@ def main(args):
                     else: 
                         embedding_dp_option = model.model.embed_tokens(input_ids)
 
-                delta_P = embedding_dp_option - anchor_embedding[option]
-                # delta_P_norm = torch.norm(delta_P).item()
-                # dp_norm = torch.norm(embedding_dp_option).item()
-                # anchor_norm = torch.norm(anchor_embedding_input).item()
-                # print("mean_norm: ", delta_P_norm)
-                # print("norm_rate: ",delta_P_norm/max(dp_norm, anchor_norm))
-
-                # taylor_correction = torch.sum(anchor_gradients[option] * delta_P).item()
-                # def estimate_loss_second_order(anchor_loss, anchor_gradient, anchor_input, dp_input, option):
                 estimated_loss = estimate_loss_second_order(anchor_loss=anchor_losses[option], anchor_gradient=anchor_gradients[option], anchor_input=anchor_embedding[option], dp_input=embedding_dp_option, option=option)
-                # estimated_loss = anchor_losses[option] + taylor_correction
-                # print(f"anchor_gradients.size: {anchor_gradients[option].shape}; delta_P.size: {delta_P.shape}")
                 option_losses.append(estimated_loss)
 
             predicted_option_idx = np.argmin(option_losses)
