@@ -249,29 +249,16 @@ class MetaICLData(object):
         best_demonstrations = []
 
         total_flops = 0
-
-        # while len(selected_indices) < self.k:
-        # base_index = next(i for i in range(len(test_data)) if i not in selected_indices)
-        # best_candidate = base_index
-        # best_loss, flops = self.evaluate_loss(gpt2, metaicl_model, best_demonstrations+[test_data[base_index]], dev_data, test_data[0]["task"])
-        # total_flops+=flops
-        # if self.is_flops: self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
         loss_list = []
         for i in range(len(test_data)):
-            # if (i in selected_indices) or i==base_index: continue
             candidate_demonstrations = best_demonstrations + [test_data[i]]
             candidate_loss, flops = self.evaluate_loss(gpt2, metaicl_model, candidate_demonstrations, dev_data, test_data[0]["task"])
             loss_list.append(candidate_loss)
+            total_flops+=flops
             self.logger.info(f"----------------candidate_loss : {candidate_loss}----------------")
-            # if candidate_loss < best_loss:
-            #     best_candidate = i
-            #     best_loss = candidate_loss
 
-        # selected_indices.append(best_candidate)
         loss_array = np.array(loss_list)
         selected_indices = np.argsort(loss_array)[:self.k]
-        # self.logger.info("**"*20)
-        # self.logger.info(f"selected_indices: {selected_indices}; best_candidate : {best_candidate}")
         for i in selected_indices:
             best_demonstrations.append(test_data[i])
         self.logger.info("---------best_demonstrations---------")
@@ -350,7 +337,7 @@ class MetaICLData(object):
                 test_text = dp["input"]
                 dp_feature = val_features[dp_idx]
 
-                samples, top_indices, _ = self._select_top_k_neighbors(dp_feature, test_features, test_data, k=10,dp_idx=-1)
+                samples, top_indices, _ = self._select_top_k_neighbors(dp_feature, test_features, test_data, k=12,dp_idx=-1)
 
                 ground, _, flops = self.greedy_select_condition(gpt2=gpt2, metaicl_model=metaicl_model,test_data=samples, dev_data=dev_data, subset_size=self.k)
                 total_flops+=flops
@@ -2191,175 +2178,6 @@ class MetaICLData(object):
 
         if self.local_rank<=0:
             self.logger.info(text)
-
-
-
-    # def tensorize_unlabeled(self, gpt2, _test_data, _val_data, m, options=None, add_newlines=True):
-    #     val_data, test_data, unlab_data =  [], [], []
-    #     cut_point = len(_test_data)-len(_test_data)//4
-    #     for idx, dp in enumerate(_test_data):
-    #         if "output" not in dp: dp["output"] = dp["options"][0]
-    #         if idx < cut_point: test_data.append(dp.copy())
-    #         else: unlab_data.append(dp.copy())
-    #     for dp in _val_data:
-    #         if "output" not in dp: dp["output"] = dp["options"][0]
-    #         val_data.append(dp.copy())
-    #     task = _test_data[0]["task"]
-    #     test_features_path = f"./features/{task}_test_features.json"
-    #     with open(test_features_path, "r") as file:
-    #         test_features = json.load(file)
-    #     val_features_path = f"./features/{task}_val_features.json"
-    #     with open(val_features_path, "r") as file:
-    #         val_features = json.load(file)
-
-    #     input_ids, attention_mask, token_type_ids = [], [], []
-    #     metadata = []
-    #     if self.use_demonstrations:
-    #         test_texts = [dp["input"] + " " + dp["output"] for dp in test_data]
-    #         test_labels = [dp["output"] for dp in test_data]
-
-    #     all_indices = [i for i in range(len(test_data))]
-    #     # print(all_indices)
-    #     similarities = [0 for i in range(len(test_data))]
-    #     forsel, _ = self._forward_selection(
-    #         embeddings=test_features,
-    #         top_k_indices=all_indices,
-    #         m=m, 
-    #         candidate_labels=test_labels, 
-    #         test_data=test_data,
-    #         similarities = similarities,
-    #         seed=42
-    #     )
-    #     demonstration,psu_data = [], []
-    #     for dp in forsel:
-    #         demonstration+=self.tokenizer("Input: " + dp["input"] + " " + "Label: "+dp["output"])["input_ids"]
-    #     for idx, dp in enumerate(unlab_data):
-    #         used = dp["output"]
-    #         _, dp["output"]= self.forward(gpt2, demonstration,dp,dp["task"])
-    #         self.logger.info(used+" ;;; "+dp["output"])
-    #         psu_data.append(dp)
-
-    #     for dp in psu_data:
-    #         test_data.append(dp)
-    #     test_labels = [dp["output"] for dp in test_data]
-    #     # print("len(test_data) : ",len(test_data))
-
-    #     for dp_idx, dp in enumerate(val_data):
-    #         inputs, outputs, answer = self._prepro_each_datapoint(
-    #             dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
-
-    #         if self.use_demonstrations:
-    #             test_text = dp["input"]
-    #             dp_feature = val_features[dp_idx]            
-
-    #             top_k_neighbors, top_k_indices, similarities = self._select_top_k_neighbors(
-    #                 dp_feature, test_features, test_data, self.k, len(test_data)+1
-    #             )
-
-    #             forsel, _ = self._forward_selection(
-    #                 embeddings=test_features,
-    #                 top_k_indices=top_k_indices,
-    #                 m=m, 
-    #                 candidate_labels=test_labels, 
-    #                 test_data=test_data,
-    #                 similarities = similarities,
-    #                 seed=42
-    #             )
-
-    #             demonstrations = []
-    #             for i, neighbor_dp in enumerate(forsel):
-    #                 input_, output_ = self._prepro_each_datapoint(
-    #                     neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
-    #                 demonstrations += input_ + output_
-
-    #         indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
-
-    #         metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
-
-    #         for inputs_, outputs_ in zip(inputs, outputs):
-    #             if self.use_demonstrations:
-    #                 inputs_ = demonstrations + inputs_
-    #             encoded = prepro_sentence_pair_single(
-    #                 inputs_, outputs_, self.max_length, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
-    #                 allow_truncation=self.use_demonstrations
-    #             )
-    #             input_ids.append(encoded[0])
-    #             attention_mask.append(encoded[1])
-    #             token_type_ids.append(encoded[2])
-
-    #     self.tensorized_inputs = dict(input_ids=torch.LongTensor(input_ids),
-    #                                   attention_mask=torch.LongTensor(attention_mask),
-    #                                   token_type_ids=torch.LongTensor(token_type_ids))
-    #     self.metadata = metadata
-
-
-
-    # def tensorize_ground(self, gpt2, _test_data, _val_data, options=None, add_newlines=True):
-    #     print("options: ", options)
-    #     if options is not None:
-    #         print("len(_test_data) : ", len(_test_data))
-    #         print(_test_data[0])
-    #         for i, dp in enumerate(_test_data):
-    #             assert "options" not in dp,print(i,dp)
-    #             _test_data[i] = {"input": dp, "options": options}
-    #         for i, dp in enumerate(_val_data):
-    #             assert "options" not in dp
-    #             _val_data[i] = {"input": dp, "options": options}
-    #     print("len(_test_data) : ",len(_test_data))
-    #     print("len(_val_data) : ", len(_val_data))
-
-    #     val_data, dev_data, test_data = [], [], []
-    #     for dp in _test_data:
-    #         if "output" not in dp: dp["output"] = dp["options"][0]
-    #         test_data.append(dp.copy())
-    #     for idx, dp in enumerate(_val_data):
-    #         if "output" not in dp: dp["output"] = dp["options"][0]
-    #         if idx<= len(_val_data)//2: val_data.append(dp.copy())
-    #         else: dev_data.append(dp.copy())
-    #     task = _test_data[0]["task"]
-    #     with open(f"./features/{task}_test_features.json", "r") as file: test_features = json.load(file)
-    #     with open(f"./features/{task}_val_features.json", "r") as file: val_features = json.load(file)
-
-    #     input_ids, attention_mask, token_type_ids = [], [], []
-    #     metadata = []
-
-    #     ground, _ = self.greedy_select_subset(gpt2=gpt2,test_data=test_data, dev_data=dev_data, subset_size=self.k)
-
-    #     for dp_idx, dp in enumerate(val_data):
-    #         inputs, outputs, answer = self._prepro_each_datapoint(
-    #             dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
-
-    #         if self.use_demonstrations:
-    #             test_text = dp["input"]
-    #             dp_feature = val_features[dp_idx]
-
-                
-    #             # def greedy_select_subset(self, test_data, dp_data, subset_size=10):
-    #             demonstrations = []
-    #             for i, neighbor_dp in enumerate(ground):
-    #                 input_, output_ = self._prepro_each_datapoint(
-    #                     neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
-    #                 demonstrations += input_ + output_
-
-    #         indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
-
-    #         metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
-
-    #         for inputs_, outputs_ in zip(inputs, outputs):
-    #             if self.use_demonstrations:
-    #                 inputs_ = demonstrations + inputs_
-    #             encoded = prepro_sentence_pair_single(
-    #                 inputs_, outputs_, self.max_length, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
-    #                 allow_truncation=self.use_demonstrations
-    #             )
-    #             input_ids.append(encoded[0])
-    #             attention_mask.append(encoded[1])
-    #             token_type_ids.append(encoded[2])
-
-    #     self.tensorized_inputs = dict(input_ids=torch.LongTensor(input_ids),
-    #                                   attention_mask=torch.LongTensor(attention_mask),
-    #                                   token_type_ids=torch.LongTensor(token_type_ids))
-    #     self.metadata = metadata
 
 def prepro_sentence_pair_single_(ids1, ids2, max_length, tokenizer,
                                 bos_token_id, eos_token_id,
