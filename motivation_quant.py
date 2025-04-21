@@ -106,20 +106,22 @@ def main(args):
         print("last_token_idx: ",last_token_idx)
         print("input_last_token: ", tokenizer.decode(input_ids[0, last_token_idx]))
         print("output: ", tokenizer.decode(torch.argmax(output_logits[0,last_token_idx,:])))
-        # log_probs = F.log_softmax(output_logits[0, last_token_idx, :], dim=-1)
-        # loss = -log_probs[tokens_output]
-        # loss.backward()
-        selected_logit = -output_logits[0, last_token_idx, tokens_output.item()]
-        gradient = torch.autograd.grad(selected_logit, embedding_input, retain_graph=True, create_graph=True)[0]
+        log_probs = F.log_softmax(output_logits[0, last_token_idx, :], dim=-1)
+        loss = -log_probs[tokens_output]
+        loss.backward()
+        # selected_logit = -output_logits[0, last_token_idx, tokens_output.item()]
+        # gradient = torch.autograd.grad(selected_logit, embedding_input, retain_graph=True, create_graph=True)[0]
         
+        # anchor_embedding[option] = embedding_input
+        # anchor_losses[option] = selected_logit.item()
+        # anchor_gradients[option] = gradient
         anchor_embedding[option] = embedding_input
-        anchor_losses[option] = selected_logit.item()
-        anchor_gradients[option] = gradient
+        anchor_losses[option] = loss.item()
+        anchor_gradients[option] = embedding_input.grad.clone().detach()
 
     dp_label = []
     dp_loss_all = []
     dp_loss, dp_gradients = {}, {}
-    # exit()
     for dp in tqdm(test_data[1:]):
         for option in dp["options"]:
             input_tokens =init+ "Input: " + dp["input"] + " Output: "
