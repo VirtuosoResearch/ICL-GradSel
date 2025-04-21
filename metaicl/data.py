@@ -2385,11 +2385,11 @@ def prepro_sentence_pair_single(ids1, ids2, max_length,
     #print(tokenizer.all_special_ids)
     special_ids = set(tokenizer.all_special_ids)
     #special_ids.extend([128000, 128001])
-    # print("************************")
-    # print("ids1: ",ids1)
-    # print("decode(ids1): ",tokenizer.decode(ids1))
-    # print("ids2: ",ids2)
-    # print("decode(ids2): ",tokenizer.decode(ids2))
+    print("************************")
+    print("ids1: ",ids1)
+    print("decode(ids1): ",tokenizer.decode(ids1))
+    print("ids2: ",ids2)
+    print("decode(ids2): ",tokenizer.decode(ids2))
 
     ids1 = [i for i in ids1 if i not in special_ids]
     ids2 = [i for i in ids2 if i not in special_ids]
@@ -2417,9 +2417,10 @@ def prepro_sentence_pair_single(ids1, ids2, max_length,
     # Token type ids: 0 for ids1, 1 for ids2, 0 for bos and eos (you can adjust this)
     token_type_ids = [0] + [0] * len(ids1) + [1] * len(ids2) + [0] + [0] * n_pad
 
-    # print("input_ids: ",input_ids)
-    # print("tokenizer.decode(input_ids): ",tokenizer.decode(input_ids))
-    # print("------------------------")
+    print("input_ids: ",input_ids)
+    print("tokenizer.decode(input_ids): ",tokenizer.decode(input_ids))
+    print("token_type_ids: ",token_type_ids)
+    print("------------------------")
     return input_ids, attention_mask, token_type_ids
 
 
