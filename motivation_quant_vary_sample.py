@@ -9,12 +9,14 @@ import argparse
 import random
 from transformers import BitsAndBytesConfig
 from transformers import AutoConfig
+from torch.nn.attention import SDPBackend, sdpa_kernel
+
+
 
 def estimate_loss_second_order(anchor_loss, anchor_gradient, anchor_input, dp_input, option):
     delta_P = dp_input - anchor_input.detach()
     delta_P = delta_P.to(anchor_input.device)
     delta_P.requires_grad = False
-
     taylor_1st = torch.dot(anchor_gradient.view(-1), delta_P.view(-1))
     estimated_loss = anchor_loss + taylor_1st.item()
 
@@ -22,6 +24,8 @@ def estimate_loss_second_order(anchor_loss, anchor_gradient, anchor_input, dp_in
     torch.cuda.empty_cache()
 
     return estimated_loss
+
+
 
 # "meta-llama/Llama-3.2-1B"
 def main(args):
@@ -39,14 +43,14 @@ def main(args):
     model = AutoModelForCausalLM.from_pretrained(
         model_name, 
         quantization_config=bnb_config,
-        device_map= {"": args.device},
+        device_map= {"": args.device}
     )
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model=model.to(device)
 
     model.eval()
     tokenizer.pad_token = tokenizer.eos_token
-    if tokenizer.padding_side == 'left':
+    if tokenizer.padding_side=="left":
         tokenizer.padding_side = 'right'
     
     print("tokenizer.padding_side: ",tokenizer.padding_side)
@@ -75,12 +79,12 @@ def main(args):
     init+="Here is the query to answer: \n"
 
     anchor_dp = test_data[0]
-
+    query_dp = test_data[1]
     anchor_losses = {}
     anchor_gradients = {}
     anchor_embedding = {}
     for option in anchor_dp["options"]:
-        input =  init+"Input: " + anchor_dp["input"] + " Output: "
+        input =  init + "Input: " + anchor_dp["input"]+" Output: "+anchor_dp["output"]+"\n"+"Input: " + query_dp["input"] + " Output: "
         input_tokens = tokenizer(input, return_tensors="pt", padding="max_length", truncation=True, max_length=args.max_length*(args.k+1))
         input_ids = input_tokens["input_ids"].to(device)
         attention_mask = input_tokens["attention_mask"].to(device)
@@ -89,6 +93,7 @@ def main(args):
         print("input_token: ",tokenizer.decode(input_ids[0]))
         print("output_token: ", tokens_output)
         print("output_text: ",tokenizer.decode(tokens_output))
+
 
         with torch.no_grad():
             if "gpt2" in model_name: embedding_input = model.transformer.wte(input_ids)
@@ -120,9 +125,9 @@ def main(args):
     dp_loss_all = []
     dp_loss, dp_gradients = {}, {}
     # exit()
-    for dp in tqdm(test_data[1:]):
+    for dp in tqdm(test_data[2:]):
         for option in dp["options"]:
-            input_tokens =init+ "Input: " + dp["input"] + " Output: "
+            input_tokens =init + "Input: " + dp["input"]+" Output: "+dp["output"]+"\n"+"Input: " + query_dp["input"] + " Output: "
             
             tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=args.max_length*(args.k+1))
             input_ids = tokens_input["input_ids"].to(device)
@@ -155,17 +160,16 @@ def main(args):
     correct_predictions = 0
     total_samples = len(test_data) - 1 
 
-    # current_error = 0.0
     current_error = []
     error_list = [] 
 
     distances = []
 
-    for idx, dp in tqdm(enumerate(test_data[1:]), total=len(test_data)-1):
+    for idx, dp in tqdm(enumerate(test_data[2:]),total=len(test_data)-2):
         option_losses = []
 
         for option in dp["options"]:
-            input_tokens = init+"Input: " + dp["input"] + " Output: "
+            input_tokens = init + "Input: " + dp["input"]+" Output: "+dp["output"]+"\n"+"Input: " + query_dp["input"] + " Output: "
 
             tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=args.max_length*(args.k+1))
             input_ids = tokens_input["input_ids"].to(device)
@@ -207,9 +211,12 @@ def main(args):
     total_samples = len(test_data) - 1
 
     accuracy = correct_predictions / total_samples if total_samples > 0 else 0
+    # current_error = current_error / total_samples / len(test_data[0]["options"])
     all_error = np.square(current_error).mean()
+    error_variance = np.var(error_list) if error_list else 0
 
     print("error : ", all_error)
+    print("error variance : ", error_variance)
     print("accuracy : ", accuracy)
     print("relevant distance: ",np.mean(distances))
 
@@ -224,4 +231,6 @@ if __name__=="__main__":
     parser.add_argument("--k", default=0, type=int)
     parser.add_argument("--seed", default=0, type=int)
     args = parser.parse_args()
+    # import os
+    # os.environ["FLASH_ATTENTION_2_DISABLED"] = "1"
     main(args)
