@@ -72,11 +72,11 @@ def main(args):
     random.seed(args.seed)
     random_numbers = random.sample(range(len(test_data)), args.k)
     if args.k>0:
-        init+= f"Here are {args.k} samples for your reference. \n"
+        init+= f"Here are {args.k+1} samples for your reference. \n"
     for i in random_numbers:
         init+="Input: " + test_data[i]["input"]+" Output: "+test_data[i]["output"]+"\n"
 
-    init+="Here is the query to answer: \n"
+    # init+=
 
     anchor_dp = test_data[0]
     query_dp = test_data[1]
@@ -84,7 +84,7 @@ def main(args):
     anchor_gradients = {}
     anchor_embedding = {}
     for option in anchor_dp["options"]:
-        input =  init + "Input: " + anchor_dp["input"]+" Output: "+anchor_dp["output"]+"\n"+"Input: " + query_dp["input"] + " Output: "
+        input =  init + "Input: " + anchor_dp["input"]+" Output: "+anchor_dp["output"]+"\n"+"Here is the query to answer: \n"+"Input: " + query_dp["input"] + " Output: "
         input_tokens = tokenizer(input, return_tensors="pt", padding="max_length", truncation=True, max_length=args.max_length*(args.k+1))
         input_ids = input_tokens["input_ids"].to(device)
         attention_mask = input_tokens["attention_mask"].to(device)
@@ -128,7 +128,7 @@ def main(args):
     # exit()
     for dp in tqdm(test_data[2:]):
         for option in dp["options"]:
-            input_tokens =init + "Input: " + dp["input"]+" Output: "+dp["output"]+"\n"+"Input: " + query_dp["input"] + " Output: "
+            input_tokens =init + "Input: " + dp["input"]+" Output: "+dp["output"]+"\n"+"Here is the query to answer: \n"+"Input: " + query_dp["input"] + " Output: "
             
             tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=args.max_length*(args.k+1))
             input_ids = tokens_input["input_ids"].to(device)
@@ -171,7 +171,7 @@ def main(args):
         option_losses = []
 
         for option in dp["options"]:
-            input_tokens = init + "Input: " + dp["input"]+" Output: "+dp["output"]+"\n"+"Input: " + query_dp["input"] + " Output: "
+            input_tokens = init + "Input: " + dp["input"]+" Output: "+dp["output"]+"\n"+"Here is the query to answer: \n"+"Input: " + query_dp["input"] + " Output: "
 
             tokens_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=args.max_length*(args.k+1))
             input_ids = tokens_input["input_ids"].to(device)
