@@ -70,7 +70,7 @@ def main(args):
     init = instructions
 
     random.seed(args.seed)
-    random_numbers = random.sample(range(len(test_data)), args.k-1)
+    random_numbers = random.sample(range(len(test_data)), args.k)
     if args.k>0:
         init+= f"Here are {args.k} samples for your reference. \n"
     for i in random_numbers:
@@ -84,7 +84,7 @@ def main(args):
     anchor_gradients = {}
     anchor_embedding = {}
     for option in anchor_dp["options"]:
-        input =  init + "Input: " + anchor_dp["input"]+" Output: "+anchor_dp["output"]+"\n"+"Here is the query to answer: \n"+"Input: " + query_dp["input"] + " Output: "
+        input =  init +"Here is the query to answer: \n"+"Input: " + query_dp["input"] + " Output: "
         input_tokens = tokenizer(input, return_tensors="pt", padding="max_length", truncation=True, max_length=args.max_length*(args.k+1))
         input_ids = input_tokens["input_ids"].to(device)
         attention_mask = input_tokens["attention_mask"].to(device)
