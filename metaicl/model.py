@@ -87,10 +87,6 @@ class MetaICLModel(object):
         '''
         checkpoint can be either keyword of the model or path to the checkpoint file
         '''
-        if checkpoint is not None and checkpoint.startswith("gpt"):
-            gpt2 = checkpoint
-            checkpoint = None
-        # self.logger.info(f"--is_quant : {is_quant}")
         if "deepseek" in gpt2: is_quant=True
         if "8B" in gpt2 or "13b" in gpt2 or "34" in gpt2: is_quant=True
         if is_quant:

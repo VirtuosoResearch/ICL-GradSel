@@ -44,71 +44,9 @@ from sklearn.linear_model import LinearRegression
 from utils.data import load_data
 from metaicl.model import MetaICLModel
 
-def _get_embedding_loss(model, tokenizer, input_texts, pad_to_length):
-    model = model.model
-    tokenizer.padding_side = "right"
-
-    inputs = tokenizer(input_texts, padding="max_length", return_tensors='pt', truncation=True, max_length=pad_to_length)
-    inputs = {k: v.to(model.device) for k, v in inputs.items()}
-
-    with torch.no_grad():
-        embedding = model.model.embed_tokens(inputs['input_ids'])
-    embedding.requires_grad = True 
-    embedding = embedding.to(model.dtype)
-
-    outputs = model(inputs_embeds=embedding)
-
-    shift_logits = outputs.logits[..., :-1, :].contiguous()
-    shift_labels = inputs["input_ids"][..., 1:].contiguous()
-
-    loss_fct = torch.nn.CrossEntropyLoss(reduction='none', ignore_index=tokenizer.pad_token_id)
-    loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)).view(shift_labels.size())
-
-    lens = (inputs["input_ids"] != tokenizer.pad_token_id).sum(-1)
-    ce_loss = loss.sum(-1) / lens
-
-    ce_loss.backward()
-    embedding_grad = embedding.grad
-
-    effective_embedding_grad = embedding_grad[:, :-1, :]
-    return ce_loss, effective_embedding_grad
-
-def _get_embedding_loss_(model, tokenizer, input_texts, pad_to_length):
-    model = model.model
-    tokenizer.padding_side = "right"
-    inputs = tokenizer(input_texts, padding=True, return_tensors='pt', truncation=True, max_length=pad_to_length)
-    inputs = {k: v.to(model.device) for k, v in inputs.items()}
-
-    with torch.no_grad():
-        embedding = model.model.embed_tokens(inputs['input_ids'])
-    embedding.requires_grad = True 
-    embedding = embedding.to(model.dtype)
-
-    outputs = model(inputs_embeds=embedding)
-
-    #outputs = model(**inputs)
-
-    shift_logits = outputs.logits[..., :-1, :].contiguous()
-    shift_labels = inputs["input_ids"][..., 1:].contiguous()
-
-    loss_fct = torch.nn.CrossEntropyLoss(reduction='none', ignore_index=tokenizer.pad_token_id)
-    loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)).view(
-        shift_labels.size())
-
-    lens = (inputs["input_ids"] != tokenizer.pad_token_id).sum(-1)
-
-    #ce_loss = loss.sum(-1).cpu().detach().numpy() / lens
-    #ce_loss = loss.sum(-1).cpu().detach().numpy()
-    ce_loss = loss.sum(-1) / lens
-
-    ce_loss.backward()
-    embedding_grad = embedding.grad
-    return ce_loss, embedding_grad
-
 class MetaICLData(object):
 
-    def __init__(self, device=0, logger=None, tokenizer=None, method="channel", use_demonstrations=True, k=16,
-                 max_length=1024, max_length_per_example=256,
+    def __init__(self, device=0, logger=None, tokenizer=None, method="channel", use_demonstrations=True, k=16, max_length=1024,
                  do_tensorize=False, tensorize_dir=None, n_process=None, n_gpu=None, local_rank=-1, is_flops=False):
 
         self.logger = logger
@@ -117,7 +55,6 @@ class MetaICLData(object):
         self.use_demonstrations = use_demonstrations
         self.k = k
         self.max_length = max_length
-        self.max_length_per_example = max_length_per_example
 
         self.do_tensorize = do_tensorize
         self.tensorize_dir = tensorize_dir
@@ -130,8 +67,6 @@ class MetaICLData(object):
         self.device = device
         self.is_null = False
         self.is_flops = is_flops
-
-        #print(tokenizer)
 
         if self.tokenizer is None:
             from transformers import AutoTokenizer
@@ -163,8 +98,6 @@ class MetaICLData(object):
         device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
         tokenizer = self.tokenizer
 
-        #max_length_per_example, max_length = 128, 128
-        max_length_per_example = self.max_length_per_example
         max_length = self.max_length
         if self.use_demonstrations:
             max_length = min(max_length * self.k, 1024)
@@ -292,13 +225,10 @@ class MetaICLData(object):
     def tensorize_ground(self, gpt2, _test_data, _val_data, options=None, add_newlines=True):
         print("options: ", options)
         if options is not None:
-            print("len(_test_data) : ", len(_test_data))
             print(_test_data[0])
             for i, dp in enumerate(_test_data):
-                assert "options" not in dp,print(i,dp)
                 _test_data[i] = {"input": dp, "options": options}
             for i, dp in enumerate(_val_data):
-                assert "options" not in dp
                 _val_data[i] = {"input": dp, "options": options}
         print("len(_test_data) : ",len(_test_data))
         print("len(_val_data) : ", len(_val_data))
@@ -415,29 +345,6 @@ class MetaICLData(object):
         total_flops =0
         for option in option_tokens:
             loss, grad, flops = self.compute_loss_and_gradient(gpt2, metaicl_model, tokenizer, input_tokens, option, device)
-            # compute_loss_and_gradient(self, gpt2, model, tokenizer, input_tokens, output_tokens, device):
-            losses.append(loss)
-            gradients.append(grad)
-            total_flops+=flops
-
-        label_id = np.argmin(losses)
-        label = dp["options"][label_id]
-
-        if return_loss:
-            return losses, gradients, label_id, total_flops
-        return label_id, label, total_flops
-    
-    def forward_estim_op(self, gpt2, metaicl_model, input_text, return_loss=False):
-
-        logger = logging.getLogger(__name__)
-        device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
-        tokenizer = self.tokenizer
-
-        losses = []
-        gradients = []
-        total_flops =0
-        for option in option_tokens:
-            loss, grad, flops = self.compute_loss_and_gradient_op(gpt2, metaicl_model, tokenizer, input_tokens, option, device)
             # compute_loss_and_gradient(self, gpt2, model, tokenizer, input_tokens, output_tokens, device):
             losses.append(loss)
             gradients.append(grad)
@@ -600,13 +507,10 @@ class MetaICLData(object):
     def tensorize_estimate(self, gpt2, _test_data, _val_data, is_quant, pseudo_k=3, options=None, add_newlines=True):
         print("options: ", options)
         if options is not None:
-            print("len(_test_data) : ", len(_test_data))
             print(_test_data[0])
             for i, dp in enumerate(_test_data):
-                assert "options" not in dp,print(i,dp)
                 _test_data[i] = {"input": dp, "options": options}
             for i, dp in enumerate(_val_data):
-                assert "options" not in dp
                 _val_data[i] = {"input": dp, "options": options}
         print("len(_test_data) : ",len(_test_data)," ; len(_val_data) : ", len(_val_data))
 
@@ -779,20 +683,6 @@ class MetaICLData(object):
 
         if is_training or for_demonstrations:
             output_tokens = self.tokenizer(dp["output"])["input_ids"]
-            if "task" in dp:
-                if (dp["task"].startswith("inst:piqa") or dp["task"].startswith("inst:yahoo_answers_topics")) and \
-                        len(input_tokens)+len(output_tokens)+2>self.max_length_per_example:
-                    input_tokens = input_tokens[:self.max_length_per_example // 2]
-                    output_tokens = output_tokens[:self.max_length_per_example // 2 - 2]
-
-                elif len(input_tokens)>=self.max_length_per_example - 2 - len(output_tokens):
-                    if dp["task"].startswith("inst:") and len(input_tokens)<len(output_tokens):
-                        output_tokens = output_tokens[:self.max_length_per_example - 2 - len(input_tokens)]
-                    else:
-                        input_tokens = input_tokens[:self.max_length_per_example - 2 - len(output_tokens)]
-
-            assert len(input_tokens)+len(output_tokens)+2<=self.max_length_per_example, \
-                (dp.get("task", None), len(input_tokens), len(output_tokens), self.max_length_per_example)
 
             if self.method=="direct":
                 return input_tokens, output_tokens
@@ -805,11 +695,9 @@ class MetaICLData(object):
             assert len(dp["options"])>=2, dp
             assert dp["output"] in dp["options"]
             option_tokens = [self.tokenizer(option)["input_ids"] for option in dp["options"]]
-            option_length = np.max([len(option) for option in option_tokens])
 
-            if len(input_tokens)>=self.max_length_per_example - 2 - option_length:
-                input_tokens = input_tokens[:self.max_length_per_example - 2 - option_length]
-
+            # que_tokens = self.tokenizer("\nHere is the query input: ")["input_ids"]
+            # input_tokens = [que_tokens + input_tokens[1:] for _ in option_tokens]
             input_tokens = [input_tokens for _ in option_tokens]
             output_tokens = option_tokens
             option_tokens = [dp["options"].index(dp["output"])]
@@ -850,6 +738,12 @@ class MetaICLData(object):
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
 
+        instructions = f"Here are {len(test_data[0]['options'])} options: "
+        for option in test_data[0]["options"]: instructions+=option+", "
+        instructions+=f"You should choose one of them to answer at the end. \nHere are {self.k} samples for your reference. \n"
+        init_tokens = self.tokenizer(instructions)["input_ids"][1:]
+        # print("input_text : ", self.tokenizer.decode(init_tokens))
+
         for dp_idx, dp in enumerate(val_data):
             inputs, outputs, answer = self._prepro_each_datapoint( # for_demonstrations is Talse!!
                 dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
@@ -861,7 +755,7 @@ class MetaICLData(object):
                     dp_feature, test_features, test_data, self.k, dp_idx
                 )
 
-                demonstrations = []
+                demonstrations = init_tokens
                 for i, neighbor_dp in enumerate(top_k_neighbors):
                     # print("neighbor_dp: ",neighbor_dp)
                     # neighbor_dp["input"] = "input: " + neighbor_dp["input"]
@@ -929,33 +823,43 @@ class MetaICLData(object):
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
 
-        for dp_idx, dp in enumerate(val_data):
-            inputs, outputs, answer = self._prepro_each_datapoint(
-                dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
+        instructions = f"Here are {len(test_data[0]['options'])} options: "
+        for option in test_data[0]["options"]: instructions+=option+", "
+        instructions+=f"You should choose one of them to answer at the end. \nHere are {self.k} samples for your reference. \n"
+        init_tokens = self.tokenizer(instructions)["input_ids"][1:]
+        # print("input_text : ", self.tokenizer.decode(init_tokens))
 
+        for dp_idx, dp in enumerate(val_data):
+            inputs, outputs, answer = self._prepro_each_datapoint( # for_demonstrations is Talse!!
+                dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
+            # print("*********** seperate ***********")
             if self.use_demonstrations:
                 dp_feature = val_features[dp_idx]            
 
-                top_k_neighbors = self._select_random_k_neighbors(
+                random_k_neighbors = self._select_random_k_neighbors(
                     dp_feature, test_features, test_data, self.k, dp_idx
                 )
 
-                demonstrations = []
-                for i, neighbor_dp in enumerate(top_k_neighbors):
-                    input_, output_ = self._prepro_each_datapoint(
+                demonstrations = init_tokens
+                for i, neighbor_dp in enumerate(random_k_neighbors):
+                    # print("neighbor_dp: ",neighbor_dp)
+                    # neighbor_dp["input"] = "input: " + neighbor_dp["input"]
+                    # neighbor_dp["output"] = "output: "+ neighbor_dp["output"]
+                    input_, output_ = self._prepro_each_datapoint( # for_demonstrations is True!!
                         neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
                     demonstrations += input_[1:] + output_[1:]
-
+                #print(demonstrations)
             indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
+
 
             metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
 
             for inputs_, outputs_ in zip(inputs, outputs):
+
                 if self.use_demonstrations:
                     inputs_ = demonstrations + inputs_[1:]
-                # print(f"output_[1]: {self.tokenizer.decode(output_[1])}, output_[2]: {self.tokenizer.decode(output_[2])}")
                 encoded = prepro_sentence_pair_single(
-                    inputs_, [outputs_[2]], self.max_length, self.tokenizer, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
+                    inputs_, [outputs_[2]], self.max_length, self.tokenizer,self.tokenizer.bos_token_id, self.tokenizer.eos_token_id, 
                     allow_truncation=self.use_demonstrations
                 )
                 input_ids.append(encoded[0])

@@ -74,7 +74,7 @@ def main(logger, args):
     # setup hyperparams for data
 
     max_length_per_example = 128
-    max_length = 256
+    max_length = 128
     if args.use_demonstrations:
         orig_max_length = max_length
         if args.do_zeroshot:
@@ -88,7 +88,7 @@ def main(logger, args):
         args.test_batch_size, max_length, max_length_per_example))
 
     metaicl_data = MetaICLData(args.device ,logger, tokenizer, args.method,args.use_demonstrations, args.k,
-                               max_length, max_length_per_example, is_flops=args.is_flops)
+                               max_length, is_flops=args.is_flops)
     # metaicl_data.to(device)
     results = []
     errors = []
