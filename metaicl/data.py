@@ -374,8 +374,10 @@ class MetaICLData(object):
     def compute_loss_and_gradient(self, gpt2, metaicl_model, tokenizer, input_tokens, output_tokens, device):
 
         tokenizer.pad_token = tokenizer.eos_token
-        input_ids = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=600).input_ids.to(device)
-        output_ids = tokenizer(output_tokens, return_tensors="pt")["input_ids"][0][-1].to(device)
+        token_input = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=self.max_length)
+        input_ids = token_input["input_ids"].to(device)
+        attention_mask = token_input["attention_mask"].to(device)
+        output_ids = tokenizer(output_tokens, return_tensors="pt")["input_ids"][0][1].to(device)
 
         with torch.no_grad():
             if "gpt" in gpt2:
@@ -386,14 +388,16 @@ class MetaICLData(object):
         embedding.requires_grad = True 
         embedding = embedding.to(metaicl_model.model.dtype)
 
-        output_logits = metaicl_model.model(inputs_embeds=embedding).logits
-        last_token_idx = input_ids.shape[1] - 1 
+        output_logits = metaicl_model.model(inputs_embeds=embedding, attention_mask=attention_mask).logits
+        last_token_idx = attention_mask.sum(dim=1).item()-1
+        # last_token_idx = input_ids.shape[1] - 1 
         log_probs = F.log_softmax(output_logits[0, last_token_idx, :], dim=-1) 
 
         target_token = output_ids
         loss = -log_probs[target_token]
         
-        flops, params = profile(metaicl_model.model, inputs=(input_ids,))
+        # flops, params = profile(metaicl_model.model, inputs=(input_ids,))
+        flops = 0
         if self.is_flops:
             flops, params = profile(metaicl_model.model, inputs=(input_ids,))
             self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
@@ -401,35 +405,6 @@ class MetaICLData(object):
         loss.backward()
         return loss.item(), embedding.grad, flops
 
-    def compute_loss_and_gradient_op(self, gpt2, metaicl_model, tokenizer, input_tokens, output_tokens, device):
-
-        tokenizer.pad_token = tokenizer.eos_token
-
-        input_ids = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=self.max_length).input_ids.to(device)
-        output_ids = tokenizer(output_tokens, return_tensors="pt")["input_ids"][0][-1].to(device)
-
-        with torch.no_grad():
-            if "gpt" in gpt2:
-                embedding = metaicl_model.model.transformer.wte(input_ids)
-            elif "opt" in gpt2: embedding = metaicl_model.model.model.decoder.embed_tokens(input_ids)
-            else:
-                embedding = metaicl_model.model.model.embed_tokens(input_ids)
-        embedding.requires_grad = True 
-        embedding = embedding.to(metaicl_model.model.dtype)
-
-        output_logits = metaicl_model.model(inputs_embeds=embedding).logits
-        last_token_idx = input_ids.shape[1] - 1 
-        log_probs = F.log_softmax(output_logits[0, last_token_idx, :], dim=-1) 
-
-        target_token = output_ids
-        loss = -log_probs[target_token]
-        
-        if self.is_flops: 
-            flops, params = profile(metaicl_model.model, inputs=(input_ids,))
-            self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
-        
-        loss.backward()
-        return loss.item(), embedding.grad, flops
 
     def forward_estim(self, gpt2, metaicl_model, demonstrations, dp, task, return_loss=False):
 
@@ -486,10 +461,6 @@ class MetaICLData(object):
 
         input_tokens_1 = tokenizer(base_str, return_tensors="pt", padding="max_length", truncation=True, max_length=pad_to_length)["input_ids"].to(device)
         input_tokens_2 = tokenizer(candidate_str, return_tensors="pt", padding="max_length", truncation=True, max_length=pad_to_length)["input_ids"].to(device)
-
-        # max_len = pad_to_length
-        # input_tokens_1 = torch.nn.functional.pad(input_tokens_1, (0, max_len - input_tokens_1.size(1)), value=tokenizer.pad_token_id)
-        # input_tokens_2 = torch.nn.functional.pad(input_tokens_2, (0, max_len - input_tokens_2.size(1)), value=tokenizer.pad_token_id)
 
         with torch.no_grad():
             if "gpt" in gpt2:
@@ -618,284 +589,6 @@ class MetaICLData(object):
 
         return best_demonstrations, best_candidate_accuracy, total_flops
 
-    def greedy_select_subset3(self, gpt2, metaicl_model, test_data, dev_data):
-        def get_length(example, prompt_text, options):
-            return max(len(prompt_text + example["input"] + op + "\n") for op in options)
-        def get_max_tokenized_length(tokenizer, test_data, prompt_text, options):
-            max_len = 0
-            for example in test_data:
-                for op in options:
-                    full_text = prompt_text + example["input"] + op + "\n"
-                    input_ids = tokenizer(full_text, return_tensors="pt", truncation=False)["input_ids"]
-                    max_len = max(max_len, input_ids.size(1))
-            return max_len
-        self.options = test_data[0]["options"]
-        
-        selected_indices, best_demonstrations = [], []
-        device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
-
-
-        total_flops = 0
-        prompt_text = ""
-
-        while len(selected_indices) < self.k:
-            max_token_len = get_max_tokenized_length(self.tokenizer, test_data, prompt_text, self.options)
-            # Contruct input for different options
-            
-            #base_index = next(i for i in range(len(test_data)) if i not in selected_indices)
-            base_index = max(
-                (i for i in range(len(test_data)) if i not in selected_indices),
-                key=lambda i: get_length(test_data[i], prompt_text, self.options)
-            )
-            base_example = test_data[base_index]
-            # print(f"test_data[base_index] : {test_data[base_index]}")
-            base_text_option_dict = {}
-            loss_option_dict, gradient_option_dict = {}, {}
-            for op in self.options:
-                #base_text = "Input: " + base_example["input"]+ op +"\n"
-                base_text = prompt_text + base_example["input"]+ op +"\n"
-                base_text_option_dict[op] = base_text
-                #print(base_text)
-                base_token = self.tokenizer(base_text, return_tensors="pt", truncation=False)["input_ids"]
-                #print(base_token)
-                #print(self.tokenizer.decode(base_token[0]))
-                #print(a)
-
-                # get loss and gradient
-                loss_op, embedding_grad_op = _get_embedding_loss(model=metaicl_model, tokenizer=self.tokenizer, input_texts=[base_text], pad_to_length=max_token_len)
-
-                #print(loss_op)
-                #print(embedding_grad_op)
-                loss_option_dict[op] = loss_op
-                gradient_option_dict[op] = embedding_grad_op
-
-            best_candidate = base_index
-            best_candidate_loss = loss_option_dict[base_example["output"]].cpu().item()
-            for i, candidate_sample in tqdm(enumerate(test_data), total=len(test_data), leave=True, position=0):
-                if (i in selected_indices) or (i == base_index): 
-                    continue
-                candidate_approx_loss_dict = {}
-                for op in self.options:
-                    #candidate_str = "Input: " + candidate_sample["input"] + candidate_sample["output"]+"\n"
-                    candidate_text =  prompt_text + candidate_sample["input"] + op +"\n"
-
-                    delta_P = self.compute_embedding_difference(gpt2, metaicl_model, base_str=base_text_option_dict[op], candidate_str=candidate_text, pad_to_length=max_token_len)
-                    #print(gradient_option_dict[op].shape)
-                    #print(delta_P.shape)
-                    taylor_correction = torch.sum(gradient_option_dict[op] * delta_P).item()
-                    taylor_approx_loss = loss_option_dict[op] + taylor_correction
-                    candidate_approx_loss_dict[op] = taylor_approx_loss
-                
-                candidate_approx_loss = candidate_approx_loss_dict[candidate_sample["output"]].cpu().item()
-                if candidate_approx_loss < best_candidate_loss:
-                    best_candidate = i
-                    best_candidate_loss = candidate_approx_loss
-                #print(f"candidate_approx_loss : {candidate_approx_loss}")
-
-                
-            self.logger.info("-------------one loop done--------------")
-            selected_indices.append(best_candidate)
-            #best_input_str += "Input: " + test_data[best_candidate]["input"] + " Label: " + test_data[best_candidate]["output"]+"\n"
-            prompt_text += test_data[best_candidate]["input"] + test_data[best_candidate]["output"]+"\n"
-            best_demonstrations.append(test_data[best_candidate])
-            best_candidate_accuracy = 0
-            self.logger.info(f"Selected index {best_candidate}")
-
-        return best_demonstrations, best_candidate_accuracy, total_flops
-    
-    def greedy_select_subset4(self, gpt2, metaicl_model, test_data, dev_data):
-        def get_length(example, prompt_text, options):
-            return max(len(prompt_text + example["input"] + op + "\n") for op in options)
-        def get_max_tokenized_length(tokenizer, test_data, prompt_text, options):
-            max_len = 0
-            for example in test_data:
-                for op in options:
-                    full_text = prompt_text + example["input"] + op + "\n"
-                    input_ids = tokenizer(full_text, return_tensors="pt", truncation=False)["input_ids"]
-                    max_len = max(max_len, input_ids.size(1))
-            return max_len
-        self.options = test_data[0]["options"]
-        
-        selected_indices, best_demonstrations = [], []
-        device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
-
-
-        total_flops = 0
-        prompt_text = ""
-        # ramdom select
-        while len(selected_indices) < 3:
-            random_index = random.randint(0, len(test_data)-1)
-            selected_indices.append(random_index)
-            prompt_text += test_data[random_index]["input"] + test_data[random_index]["output"]+"\n"
-            best_demonstrations.append(test_data[random_index])
-    
-        print(len(selected_indices))
-
-        while len(selected_indices) < self.k:
-            max_token_len = get_max_tokenized_length(self.tokenizer, test_data, prompt_text, self.options)
-            # Contruct input for different options
-            
-            #base_index = next(i for i in range(len(test_data)) if i not in selected_indices)
-            base_index = max(
-                (i for i in range(len(test_data)) if i not in selected_indices),
-                key=lambda i: get_length(test_data[i], prompt_text, self.options)
-            )
-            base_example = test_data[base_index]
-            # print(f"test_data[base_index] : {test_data[base_index]}")
-            base_text_option_dict = {}
-            loss_option_dict, gradient_option_dict = {}, {}
-            for op in self.options:
-                #base_text = "Input: " + base_example["input"]+ op +"\n"
-                base_text = prompt_text + base_example["input"]+ op +"\n"
-                base_text_option_dict[op] = base_text
-
-                # get loss and gradient
-                loss_op, embedding_grad_op = _get_embedding_loss(model=metaicl_model, tokenizer=self.tokenizer, input_texts=[base_text], pad_to_length=max_token_len)
-
-                #print(loss_op)
-                #print(embedding_grad_op)
-                loss_option_dict[op] = loss_op
-                gradient_option_dict[op] = embedding_grad_op
-
-            best_candidate = base_index
-            best_candidate_loss = loss_option_dict[base_example["output"]].cpu().item()
-            for i, candidate_sample in tqdm(enumerate(test_data), total=len(test_data), leave=True, position=0):
-                if (i in selected_indices) or (i == base_index): 
-                    continue
-                candidate_approx_loss_dict = {}
-                for op in self.options:
-                    #candidate_str = "Input: " + candidate_sample["input"] + candidate_sample["output"]+"\n"
-                    candidate_text =  prompt_text + candidate_sample["input"] + op +"\n"
-
-                    delta_P = self.compute_embedding_difference(gpt2, metaicl_model, base_str=base_text_option_dict[op], candidate_str=candidate_text, pad_to_length=max_token_len)
-                    #print(gradient_option_dict[op].shape)
-                    #print(delta_P.shape)
-                    taylor_correction = torch.sum(gradient_option_dict[op] * delta_P).item()
-                    taylor_approx_loss = loss_option_dict[op] + taylor_correction
-                    candidate_approx_loss_dict[op] = taylor_approx_loss
-                
-                candidate_approx_loss = candidate_approx_loss_dict[candidate_sample["output"]].cpu().item()
-                if candidate_approx_loss < best_candidate_loss:
-                    best_candidate = i
-                    best_candidate_loss = candidate_approx_loss
-                #print(f"candidate_approx_loss : {candidate_approx_loss}")
-
-                
-            self.logger.info("-------------one loop done--------------")
-            selected_indices.append(best_candidate)
-            #best_input_str += "Input: " + test_data[best_candidate]["input"] + " Label: " + test_data[best_candidate]["output"]+"\n"
-            prompt_text += test_data[best_candidate]["input"] + test_data[best_candidate]["output"]+"\n"
-            best_demonstrations.append(test_data[best_candidate])
-            best_candidate_accuracy = 0
-            self.logger.info(f"Selected index {best_candidate}")
-
-        return best_demonstrations, best_candidate_accuracy, total_flops
-    
-    def greedy_select_subset5(self, gpt2, metaicl_model, test_data, dev_data):
-        def get_length(example, prompt_text, options):
-            return max(len(prompt_text + example["input"] + op + "\n") for op in options)
-        def get_max_tokenized_length(tokenizer, test_data, prompt_text, options):
-            max_len = 0
-            for example in test_data:
-                for op in options:
-                    full_text = prompt_text + example["input"] + op + "\n"
-                    input_ids = tokenizer(full_text, return_tensors="pt", truncation=False)["input_ids"]
-                    max_len = max(max_len, input_ids.size(1))
-            return max_len
-        def build_text(prefix_text, base_sample, query_sample, op):
-            return prefix_text + base_sample["input"] + base_sample["output"] + query_sample["input"] + op + "\n"
-        self.options = test_data[0]["options"]
-        
-        selected_indices, best_demonstrations = [], []
-        device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
-
-
-        total_flops = 0
-        prompt_text = ""
-
-        while len(selected_indices) < self.k:
-            max_token_len = get_max_tokenized_length(self.tokenizer, test_data, prompt_text, self.options)
-            # Contruct input for different options
-            
-            #base_index = next(i for i in range(len(test_data)) if i not in selected_indices)
-            base_index = max(
-                (i for i in range(len(test_data)) if i not in selected_indices),
-                key=lambda i: get_length(test_data[i], prompt_text, self.options)
-            )
-            base_example = test_data[base_index]
-            # print(f"test_data[base_index] : {test_data[base_index]}")
-            base_text_option_dict = {}
-            
-            query_loss_op_dict_list = []
-            approx_acc_list = [0 for _ in range(len(test_data))]
-            approx_loss_list = [0 for _ in range(len(test_data))]
-            for query_idx, query in enumerate(dev_data):
-                loss_option_dict, gradient_option_dict = {}, {}
-                for op in self.options:
-                    #base_text = "Input: " + base_example["input"]+ op +"\n"
-                    base_text = build_text(prompt_text, base_example, query, op)
-                    base_text_option_dict[op] = base_text
-                    #print(base_text)
-                    base_token = self.tokenizer(base_text, return_tensors="pt", truncation=False)["input_ids"]
-                    #print(base_token)
-                    #print(self.tokenizer.decode(base_token[0]))
-                    #print(a)
-
-                    # get loss and gradient
-                    loss_op, embedding_grad_op = _get_embedding_loss(model=metaicl_model, tokenizer=self.tokenizer, input_texts=[base_text], pad_to_length=max_token_len)
-
-                    #print(loss_op)
-                    #print(embedding_grad_op)
-                    loss_option_dict[op] = loss_op
-                    gradient_option_dict[op] = embedding_grad_op
-                loss_ = loss_option_dict[query["output"]].cpu().item()
-                approx_loss_list[base_index] += loss_
-                #print(query['options'][np.argmin(loss_option_dict.values())], query["output"])
-                if query['options'][np.argmin(loss_option_dict.values())] == query["output"]:
-                    approx_acc_list[base_index] += 1
-                #query_loss_op_dict_list.append(loss_option_dict)
-                #print(query_loss_op_dict_list)
-
-                best_candidate = base_index
-                best_candidate_loss = loss_option_dict[base_example["output"]].cpu().item()
-                best_candidate_score = np.std([loss_option_dict[op].cpu().item() for op in self.options])
-                for i, candidate_sample in tqdm(enumerate(test_data), total=len(test_data), leave=True, position=0):
-                    if (i in selected_indices) or (i == base_index): 
-                        continue
-                    candidate_approx_loss_dict = {}
-                    for op in self.options:
-                        #candidate_str = "Input: " + candidate_sample["input"] + candidate_sample["output"]+"\n"
-                        #candidate_text =  prompt_text + candidate_sample["input"] + op +"\n"
-                        candidate_text = build_text(prompt_text, candidate_sample, query, op)
-
-                        delta_P = self.compute_embedding_difference(gpt2, metaicl_model, base_str=base_text_option_dict[op], candidate_str=candidate_text, pad_to_length=max_token_len)
-                        #print(gradient_option_dict[op].shape)
-                        #print(delta_P.shape)
-                        taylor_correction = torch.sum(gradient_option_dict[op] * delta_P).item()
-                        taylor_approx_loss = loss_option_dict[op] + taylor_correction
-                        candidate_approx_loss_dict[op] = taylor_approx_loss
-                    #print(query['options'][np.argmin(candidate_approx_loss_dict.values())], query["output"])
-                    approx_loss_list[i] += candidate_approx_loss_dict[query["output"]].cpu().item()
-                    if query['options'][np.argmin(candidate_approx_loss_dict.values())] == query["output"]:
-                        approx_acc_list[i] += 1
-            #print(approx_acc_list)
-            #best_candidate = np.argmax(approx_acc_list)
-            for si in selected_indices:
-                approx_loss_list[si] = 1e10
-            #approx_loss_list[selected_indices] = 1e10
-            best_candidate = np.argmin(approx_loss_list)
-            print(approx_loss_list)
-
-                
-            self.logger.info("-------------one loop done--------------")
-            selected_indices.append(best_candidate)
-            #best_input_str += "Input: " + test_data[best_candidate]["input"] + " Label: " + test_data[best_candidate]["output"]+"\n"
-            prompt_text += test_data[best_candidate]["input"] + test_data[best_candidate]["output"]+"\n"
-            best_demonstrations.append(test_data[best_candidate])
-            best_candidate_accuracy = 0
-            self.logger.info(f"Selected index {best_candidate}")
-
-        return best_demonstrations, best_candidate_accuracy, total_flops
     
     def _select_top_k_neighbors(self, test_sample_embedding, test_embeddings, test_data, k, dp_idx):
         similarities = []
@@ -909,7 +602,7 @@ class MetaICLData(object):
         top_k_indices = np.argsort(similarities)[-k:][::-1]
         return [test_data[i] for i in top_k_indices], top_k_indices , similarities
     
-    def tensorize_estimate_(self, gpt2, _test_data, _val_data, is_quant, pseudo_k=3, options=None, add_newlines=True):
+    def tensorize_estimate(self, gpt2, _test_data, _val_data, is_quant, pseudo_k=3, options=None, add_newlines=True):
         print("options: ", options)
         if options is not None:
             print("len(_test_data) : ", len(_test_data))
@@ -1019,114 +712,114 @@ class MetaICLData(object):
                                       token_type_ids=torch.LongTensor(token_type_ids))
         self.metadata = metadata
 
-    def tensorize_estimate(self, gpt2, _test_data, _val_data, is_quant, pseudo_k=3, options=None, add_newlines=True):
-        print("options: ", options)
-        if options is not None:
-            print("len(_test_data) : ", len(_test_data))
-            print(_test_data[0])
-            for i, dp in enumerate(_test_data):
-                assert "options" not in dp,print(i,dp)
-                _test_data[i] = {"input": dp, "options": options}
-            for i, dp in enumerate(_val_data):
-                assert "options" not in dp
-                _val_data[i] = {"input": dp, "options": options}
-        print("len(_test_data) : ",len(_test_data)," ; len(_val_data) : ", len(_val_data))
+    # def tensorize_estimate(self, gpt2, _test_data, _val_data, is_quant, pseudo_k=3, options=None, add_newlines=True):
+    #     print("options: ", options)
+    #     if options is not None:
+    #         print("len(_test_data) : ", len(_test_data))
+    #         print(_test_data[0])
+    #         for i, dp in enumerate(_test_data):
+    #             assert "options" not in dp,print(i,dp)
+    #             _test_data[i] = {"input": dp, "options": options}
+    #         for i, dp in enumerate(_val_data):
+    #             assert "options" not in dp
+    #             _val_data[i] = {"input": dp, "options": options}
+    #     print("len(_test_data) : ",len(_test_data)," ; len(_val_data) : ", len(_val_data))
 
-        val_data, unlabeled_data, psudo_data, test_data = [], [], [], []
-        for dp in _test_data:
-            if "output" not in dp: dp["output"] = dp["options"][0]
-            test_data.append(dp.copy())
-        for dp in _val_data:
-            if "output" not in dp: dp["output"] = dp["options"][0]
-            val_data.append(dp.copy())
-            unlabeled_data.append(dp.copy())
-        task = _test_data[0]["task"]
-        with open(f"./features/{task}_test_features.json", "r") as file: test_features = json.load(file)
-        with open(f"./features/{task}_val_features.json", "r") as file: val_features = json.load(file)
+    #     val_data, unlabeled_data, psudo_data, test_data = [], [], [], []
+    #     for dp in _test_data:
+    #         if "output" not in dp: dp["output"] = dp["options"][0]
+    #         test_data.append(dp.copy())
+    #     for dp in _val_data:
+    #         if "output" not in dp: dp["output"] = dp["options"][0]
+    #         val_data.append(dp.copy())
+    #         unlabeled_data.append(dp.copy())
+    #     task = _test_data[0]["task"]
+    #     with open(f"./features/{task}_test_features.json", "r") as file: test_features = json.load(file)
+    #     with open(f"./features/{task}_val_features.json", "r") as file: val_features = json.load(file)
         
-        total_flops = 0
+    #     total_flops = 0
 
-        add_newlines = True
-        checkpoint = None
-        metaicl_model = MetaICLModel(logger=self.logger, out_dir= "./cache", device_num=self.device)
-        print(f"-------------- gpt2: {gpt2} ------------")
-        metaicl_model.load(gpt2=gpt2,is_quant=is_quant)
+    #     add_newlines = True
+    #     checkpoint = None
+    #     metaicl_model = MetaICLModel(logger=self.logger, out_dir= "./cache", device_num=self.device)
+    #     print(f"-------------- gpt2: {gpt2} ------------")
+    #     metaicl_model.load(gpt2=gpt2,is_quant=is_quant)
 
-        print("gpt2 : ",gpt2)
-        print("origin type(metaicl_model) : ",type(metaicl_model.model))
-        #if "Llama" in gpt2:
-        #    metaicl_model.resize(self.tokenizer)
+    #     print("gpt2 : ",gpt2)
+    #     print("origin type(metaicl_model) : ",type(metaicl_model.model))
+    #     #if "Llama" in gpt2:
+    #     #    metaicl_model.resize(self.tokenizer)
 
-        correct = 0     
+    #     correct = 0     
 
-        input_ids, attention_mask, token_type_ids = [], [], []
-        metadata = []
-        correct = 0     
-        if pseudo_k<=10:   
-            for idx,dp in tqdm(enumerate(unlabeled_data), total=len(unlabeled_data), leave=True, position=0):
-                # samples, top_indices, _ = self._select_top_k_neighbors(val_features[idx], test_features, test_data, k=pseudo_k,dp_idx=-1)
-                # demonstration=[]
+    #     input_ids, attention_mask, token_type_ids = [], [], []
+    #     metadata = []
+    #     correct = 0     
+    #     if pseudo_k<=10:   
+    #         for idx,dp in tqdm(enumerate(unlabeled_data), total=len(unlabeled_data), leave=True, position=0):
+    #             # samples, top_indices, _ = self._select_top_k_neighbors(val_features[idx], test_features, test_data, k=pseudo_k,dp_idx=-1)
+    #             # demonstration=[]
 
-                # zt_output = dp["output"]
+    #             # zt_output = dp["output"]
 
-                # for dk in samples:
-                #     demonstration+=self.tokenizer("Input: " + dk["input"] + " " + "Label: "+dk["output"])["input_ids"]
-                # _, dp["output"], flops= self.forward(gpt2, metaicl_model, demonstration, dp, dp["task"])
-                # if self.is_flops: self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
-                # total_flops+=flops
+    #             # for dk in samples:
+    #             #     demonstration+=self.tokenizer("Input: " + dk["input"] + " " + "Label: "+dk["output"])["input_ids"]
+    #             # _, dp["output"], flops= self.forward(gpt2, metaicl_model, demonstration, dp, dp["task"])
+    #             # if self.is_flops: self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
+    #             # total_flops+=flops
 
-                # correct +=(zt_output==dp["output"])
-                # dp["output"] = random.choice(dp["options"])
-                psudo_data.append(dp)
-            self.logger.info(f"ZT_Accuracy = {float(correct/(len(unlabeled_data)))}")
-        ground, _, flops = self.greedy_select_subset5(gpt2=gpt2, metaicl_model=metaicl_model, test_data=test_data, dev_data=psudo_data)
-        demonstrations = []
+    #             # correct +=(zt_output==dp["output"])
+    #             # dp["output"] = random.choice(dp["options"])
+    #             psudo_data.append(dp)
+    #         self.logger.info(f"ZT_Accuracy = {float(correct/(len(unlabeled_data)))}")
+    #     ground, _, flops = self.greedy_select_subset5(gpt2=gpt2, metaicl_model=metaicl_model, test_data=test_data, dev_data=psudo_data)
+    #     demonstrations = []
 
-        total_flops+= flops
+    #     total_flops+= flops
 
-        for i, neighbor_dp in enumerate(ground):
-            demonstrations+=self.tokenizer(neighbor_dp["input"] + " " +neighbor_dp["output"] + "\n")["input_ids"]
+    #     for i, neighbor_dp in enumerate(ground):
+    #         demonstrations+=self.tokenizer(neighbor_dp["input"] + " " +neighbor_dp["output"] + "\n")["input_ids"]
 
-        cnt=0
+    #     cnt=0
         
-        for dp in tqdm(val_data):
-            _, output, flops = self.forward(gpt2, metaicl_model, demonstrations, dp, dp["task"])
-            if self.is_flops: self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
-            total_flops+=flops
+    #     for dp in tqdm(val_data):
+    #         _, output, flops = self.forward(gpt2, metaicl_model, demonstrations, dp, dp["task"])
+    #         if self.is_flops: self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
+    #         total_flops+=flops
             
-            cnt += (output==dp["output"])
-        self.logger.info(f"Accuracy : {cnt/len(val_data)}")
-        self.logger.info(f"Total_FLOPS: {total_flops / 1e9:.2f} GFLOPs")
+    #         cnt += (output==dp["output"])
+    #     self.logger.info(f"Accuracy : {cnt/len(val_data)}")
+    #     self.logger.info(f"Total_FLOPS: {total_flops / 1e9:.2f} GFLOPs")
 
-        for i, neighbor_dp in enumerate(ground):
-            input_, output_ = self._prepro_each_datapoint(
-                neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
-            demonstrations += input_ + output_
+    #     for i, neighbor_dp in enumerate(ground):
+    #         input_, output_ = self._prepro_each_datapoint(
+    #             neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
+    #         demonstrations += input_[1:] + output_[1:]
 
-        for dp_idx, dp in enumerate(val_data):
-            inputs, outputs, answer = self._prepro_each_datapoint(
-                dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
+    #     for dp_idx, dp in enumerate(val_data):
+    #         inputs, outputs, answer = self._prepro_each_datapoint(
+    #             dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
                 
 
-            indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
+    #         indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
 
-            metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
+    #         metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
 
-            for inputs_, outputs_ in zip(inputs, outputs):
-                if self.use_demonstrations:
-                    inputs_ = demonstrations + inputs_
-                encoded = prepro_sentence_pair_single(
-                    inputs_, outputs_, self.max_length,  self.tokenizer, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
-                    allow_truncation=self.use_demonstrations
-                )
-                input_ids.append(encoded[0])
-                attention_mask.append(encoded[1])
-                token_type_ids.append(encoded[2])
+    #         for inputs_, outputs_ in zip(inputs, outputs):
+    #             if self.use_demonstrations:
+    #                 inputs_ = demonstrations + inputs_[1:]
+    #             encoded = prepro_sentence_pair_single(
+    #                 inputs_, [outputs_[2]], self.max_length,  self.tokenizer, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
+    #                 allow_truncation=self.use_demonstrations
+    #             )
+    #             input_ids.append(encoded[0])
+    #             attention_mask.append(encoded[1])
+    #             token_type_ids.append(encoded[2])
 
-        self.tensorized_inputs = dict(input_ids=torch.LongTensor(input_ids),
-                                      attention_mask=torch.LongTensor(attention_mask),
-                                      token_type_ids=torch.LongTensor(token_type_ids))
-        self.metadata = metadata
+    #     self.tensorized_inputs = dict(input_ids=torch.LongTensor(input_ids),
+    #                                   attention_mask=torch.LongTensor(attention_mask),
+    #                                   token_type_ids=torch.LongTensor(token_type_ids))
+    #     self.metadata = metadata
 
     def get_dataloader(self, batch_size, is_training):
         inputs = self.tensorized_inputs
@@ -1192,14 +885,6 @@ class MetaICLData(object):
                     dp["output"] = "\n" + dp["output"]
                     if "options" in dp:
                         dp["options"] = ["\n" + opt for opt in dp["options"]]
-            elif self.method=="channel":
-                if not is_first:
-                    dp["output"] = "\n" + dp["output"]
-                    if "options" in dp:
-                        dp["options"] = ["\n" + opt for opt in dp["options"]]
-                if not no_input:
-                    if not no_label:
-                        dp["input"] = "\n" + dp["input"]
             else:
                 raise NotImplementedError()
 
@@ -1256,30 +941,17 @@ class MetaICLData(object):
     def tensorize_topk(self, _test_data, _val_data, options=None, add_newlines=True):
         if options is not None:
             for i, dp in enumerate(_test_data):
-                print(i,dp)
-                assert "options" not in dp
-                assert type(dp) == str
                 _test_data[i] = {"input": dp, "options": options}
             for i, dp in enumerate(_val_data):
-                assert "options" not in dp
-                assert type(dp) == str
                 _val_data[i] = {"input": dp, "options": options}
-        print("len(_test_data) : ",len(_test_data))
-        print("len(_val_data) : ", len(_val_data))
 
         val_data, test_data =  [], []
 
         for dp in _test_data:
-            assert type(dp) == dict, ("Each example should be a dictionary", dp)
-            assert "input" in dp and "options" in dp and type(dp["options"]) == list, \
-                ("Test example should contain input and options in a list format", dp)
             if "output" not in dp:
                 dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
             test_data.append(dp.copy())
         for dp in _val_data:
-            assert type(dp) == dict, ("Each example should be a dictionary", dp)
-            assert "input" in dp and "options" in dp and type(dp["options"]) == list, \
-                ("Test example should contain input and options in a list format", dp)
             if "output" not in dp:
                 dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
             val_data.append(dp.copy())
@@ -1296,8 +968,16 @@ class MetaICLData(object):
         metadata = []
 
         for dp_idx, dp in enumerate(val_data):
-            inputs, outputs, answer = self._prepro_each_datapoint(
+            inputs, outputs, answer = self._prepro_each_datapoint( # for demonstrations is false!!
                 dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
+            print("inputs: ",inputs)
+            print("inputs text 0: ",self.tokenizer.decode(inputs[0]))
+            print("inputs text 1: ",self.tokenizer.decode(inputs[1]))
+            print("inputs text 2: ",self.tokenizer.decode(inputs[2]))
+            print("inputs text 3: ",self.tokenizer.decode(inputs[3]))
+            print("outputs: ",outputs)
+            print("outputs text: ",self.tokenizer.decode(outputs[0]))
+            print("answer: ",answer)
             # print("*********** seperate ***********")
             if self.use_demonstrations:
                 dp_feature = val_features[dp_idx]            
@@ -1308,7 +988,10 @@ class MetaICLData(object):
 
                 demonstrations = []
                 for i, neighbor_dp in enumerate(top_k_neighbors):
-                    input_, output_ = self._prepro_each_datapoint(
+                    print("neighbor_dp: ",neighbor_dp)
+                    neighbor_dp["input"] = "input: " + neighbor_dp["input"]
+                    neighbor_dp["output"] = "output: "+ neighbor_dp["output"]
+                    input_, output_ = self._prepro_each_datapoint( # for demonstrations is true!!
                         neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
                     demonstrations += input_[1:] + output_[1:]
                 #print(demonstrations)
@@ -1347,470 +1030,7 @@ class MetaICLData(object):
         self.metadata = metadata
 
 
-    def greedy_supcon(self, embeddings, top_k_indices, m, candidate_labels, test_data, similarities, temperature=0.1, softloss=True):
 
-        assert m <= len(top_k_indices), "Error: m must less than k"
-
-        all_combinations = list(combinations(top_k_indices, m))
-
-        best_combination_data = []
-        best_loss = float('inf') 
-        best_labels = []
-
-        for idx in range(len(embeddings)):
-            embeddings[idx] = torch.tensor(embeddings[idx], dtype=torch.float32)
-            embeddings[idx] = embeddings[idx] / torch.norm(embeddings[idx])
-
-        for combination in all_combinations:
-            selected_embeddings = [embeddings[i] for i in combination]
-            selected_data = [test_data[i] for i in combination]
-
-            # compute simloss
-            simloss = 0.0
-            for idx in combination:
-                simloss+=similarities[idx]
-            simloss /= m
-            
-            # compute supcon loss
-            con_loss, pos_loss, all_loss = 0.0, 0.0, 0.0
-            temperature=0.1
-            if softloss==False:
-                for idx1 in combination:
-                    cnt_pos=0
-                    pos_loss = all_loss =0.0
-                    for idx2 in combination:
-                        if idx1==idx2: continue
-                        idx1_embedding, idx1_label = embeddings[idx1], candidate_labels[idx1]
-                        idx2_embedding, idx2_label = embeddings[idx2], candidate_labels[idx2]
-                        loss = torch.exp(torch.matmul(idx1_embedding, idx2_embedding) / temperature)
-                        if idx1_label == idx2_label:
-                            pos_loss += loss
-                            cnt_pos+=1
-                        all_loss += loss
-                    idx_loss = pos_loss / all_loss / cnt_pos
-                    con_loss += torch.tensor(-1.0, dtype=float)  * torch.log(idx_loss)
-            else:
-                for idx1 in combination:
-                    cnt_pos = 0
-                    pos_loss = 0.0
-                    idx1_embedding, idx1_label = embeddings[idx1], candidate_labels[idx1]
-                    logits = []
-
-                    for idx2 in combination:
-                        if idx1 == idx2:
-                            continue
-                        idx2_embedding, idx2_label = embeddings[idx2], candidate_labels[idx2]
-                        similarity = torch.matmul(idx1_embedding, idx2_embedding) / temperature
-                        logits.append(similarity)
-                        if idx1_label == idx2_label:
-                            pos_loss += torch.exp(similarity)
-                            cnt_pos += 1
-
-                    logits = torch.tensor(logits)
-                    logits_max = torch.max(logits)
-                    logits = logits - logits_max.detach()
-                    exp_logits = torch.exp(logits)
-                    exp_logits_sum = exp_logits.sum()
-                    if cnt_pos > 0:
-                        pos_prob = pos_loss / exp_logits_sum 
-                        idx_loss = pos_prob / cnt_pos 
-                    else:
-                        idx_loss = 1e-6
-                    idx_loss = torch.tensor(idx_loss, dtype=torch.float32)
-                    con_loss += -1.0 * torch.log(idx_loss)
-
-            current_labels = [candidate_labels[i] for i in combination]
-            lam=0.05
-            simcon_loss = -simloss + lam*con_loss
-            # print("simloss : ",simloss, "con_loss : ",con_loss, "simcon_loss : ",simcon_loss)
-            if simcon_loss < best_loss:
-                best_loss = simcon_loss
-                best_combination_data = selected_data
-                best_labels = current_labels
-            
-        return best_combination_data, best_labels
-
-    def tensorize_supcon(self, _test_data, _val_data, m, options=None, add_newlines=True):
-        if options is not None:
-            for i, dp in enumerate(_test_data):
-                assert "options" not in dp
-                assert type(dp) == str
-                _test_data[i] = {"input": dp, "options": options}
-            for i, dp in enumerate(_val_data):
-                assert "options" not in dp
-                assert type(dp) == str
-                _val_data[i] = {"input": dp, "options": options}
-        print("len(_test_data) : ",len(_test_data))
-        print("len(_val_data) : ", len(_val_data))
-
-        val_data, test_data =  [], []
-
-        for dp in _test_data:
-            assert type(dp) == dict, ("Each example should be a dictionary", dp)
-            assert "input" in dp and "options" in dp and type(dp["options"]) == list, \
-                ("Test example should contain input and options in a list format", dp)
-            if "output" not in dp:
-                dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
-            test_data.append(dp.copy())
-        for dp in _val_data:
-            assert type(dp) == dict, ("Each example should be a dictionary", dp)
-            assert "input" in dp and "options" in dp and type(dp["options"]) == list, \
-                ("Test example should contain input and options in a list format", dp)
-            if "output" not in dp:
-                dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
-            val_data.append(dp.copy())
-        
-        task = _test_data[0]["task"]
-        test_features_path = f"./features/{task}_test_features.json"
-        with open(test_features_path, "r") as file:
-            test_features = json.load(file)
-        val_features_path = f"./features/{task}_val_features.json"
-        with open(val_features_path, "r") as file:
-            val_features = json.load(file)
-
-
-        if self.use_demonstrations:
-            test_texts = [dp["input"] + " " + dp["output"] for dp in test_data]
-            test_labels = [dp["output"] for dp in test_data]
-
-        input_ids, attention_mask, token_type_ids = [], [], []
-        metadata = []
-
-        for dp_idx, dp in enumerate(val_data):
-            inputs, outputs, answer = self._prepro_each_datapoint(
-                dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
-
-            if self.use_demonstrations:
-                test_text = dp["input"]
-                dp_feature = val_features[dp_idx]            
-
-                top_k_neighbors, top_k_indices, similarities = self._select_top_k_neighbors(
-                    dp_feature, test_features, test_data, self.k, dp_idx
-                )
-
-                greedy, best_labels = self.greedy_supcon(
-                    embeddings=test_features,
-                    top_k_indices=top_k_indices,
-                    m=m, 
-                    candidate_labels=test_labels, 
-                    test_data=test_data,
-                    similarities = similarities
-                )
-
-                demonstrations = []
-                for i, neighbor_dp in enumerate(greedy):
-                    input_, output_ = self._prepro_each_datapoint(
-                        neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
-                    demonstrations += input_ + output_
-
-            indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
-
-            metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
-
-            for inputs_, outputs_ in zip(inputs, outputs):
-                if self.use_demonstrations:
-                    inputs_ = demonstrations + inputs_
-                encoded = prepro_sentence_pair_single(
-                    inputs_, outputs_, self.max_length, self.tokenizer, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
-                    allow_truncation=self.use_demonstrations
-                )
-                input_ids.append(encoded[0])
-                attention_mask.append(encoded[1])
-                token_type_ids.append(encoded[2])
-
-        self.tensorized_inputs = dict(input_ids=torch.LongTensor(input_ids),
-                                      attention_mask=torch.LongTensor(attention_mask),
-                                      token_type_ids=torch.LongTensor(token_type_ids))
-        self.metadata = metadata
-
-    def _random_ensemble(self, embeddings, top_k_indices, m, candidate_labels, test_data, similarities, seed, temperature=0.1):
-
-        assert m <= len(top_k_indices), "Error: m must less than k"
-
-        all_combinations = list(combinations(top_k_indices, m))
-        random.seed(seed)
-        random.shuffle(all_combinations)
-
-        for idx in range(len(embeddings)):
-            embeddings[idx] = torch.tensor(embeddings[idx], dtype=torch.float32)
-            embeddings[idx] = embeddings[idx] / torch.norm(embeddings[idx])
-
-        all_loss_list = []
-
-        for idx, combination in enumerate(all_combinations):
-            if idx >=len(all_combinations)/2: break
-            selected_embeddings = [embeddings[i] for i in combination]
-            selected_data = [test_data[i] for i in combination]
-
-            # compute simloss
-            simloss = 0.0
-            for idx in combination:
-                simloss+=similarities[idx]
-            simloss /= m
-            
-            # compute supcon loss
-            con_loss, pos_loss, all_loss = 0.0, 0.0, 0.0
-            for idx1 in combination:
-                cnt_pos = 0
-                pos_loss = 0.0
-                idx1_embedding, idx1_label = embeddings[idx1], candidate_labels[idx1]
-                logits = []
-                for idx2 in combination:
-                    if idx1 == idx2:
-                        continue
-                    idx2_embedding, idx2_label = embeddings[idx2], candidate_labels[idx2]
-                    similarity = torch.matmul(idx1_embedding, idx2_embedding) / temperature
-                    logits.append(similarity)
-                    if idx1_label == idx2_label:
-                        pos_loss += torch.exp(similarity)
-                        cnt_pos += 1
-                
-                logits = torch.tensor(logits)
-                logits_max = torch.max(logits)
-                logits = logits - logits_max.detach()
-                exp_logits = torch.exp(logits)
-                exp_logits_sum = exp_logits.sum()
-                
-                if cnt_pos > 0:
-                    pos_prob = pos_loss / exp_logits_sum 
-                    idx_loss = pos_prob / cnt_pos 
-                else:
-                    idx_loss = 1e-6
-                idx_loss = torch.tensor(idx_loss, dtype=torch.float32)
-                con_loss += -1.0 * torch.log(idx_loss)
-
-            current_labels = [candidate_labels[i] for i in combination]
-            lam=0.05
-            simcon_loss = -simloss + lam*con_loss
-            # print("simloss : ",simloss, "con_loss : ",con_loss, "simcon_loss : ",simcon_loss)
-            all_loss_list.append(simcon_loss)
-
-        point_score = [1001.0 for i in range(len(top_k_indices))]
-        cnt_point = [0 for i in range(len(top_k_indices))]
-        for i, combination in enumerate(all_combinations):
-            if i>=len(all_combinations)/2: break
-            # print(f"combination: {combination}")
-            for j, indice in enumerate(top_k_indices):
-                if indice in combination:
-                    if point_score[j]>1000.0:
-                        point_score[j] = all_loss_list[i]
-                    else:
-                        point_score[j]+=all_loss_list[i]
-                    cnt_point[j]+=1
-        for i in range(len(point_score)):
-            if point_score[i] <= 1000.0:
-                point_score[i]/=cnt_point[i]
-        
-        indexed_score = list(enumerate(point_score))
-        sorted_score = sorted(indexed_score, key=lambda x: x[1])
-        min_indices = [x[0] for x in sorted_score[:m]]
-        real_indices = [top_k_indices[x] for x in min_indices]
-
-        return [test_data[x] for x in real_indices]
-
-     
-    def tensorize_ranens(self, _test_data, _val_data, m, seed, options=None, add_newlines=True):
-        if options is not None:
-            for i, dp in enumerate(_test_data):
-                assert "options" not in dp
-                assert type(dp) == str
-                _test_data[i] = {"input": dp, "options": options}
-            for i, dp in enumerate(_val_data):
-                assert "options" not in dp
-                assert type(dp) == str
-                _val_data[i] = {"input": dp, "options": options}
-        print("len(_test_data) : ",len(_test_data))
-        print("len(_val_data) : ", len(_val_data))
-
-        val_data, test_data =  [], []
-
-        for dp in _test_data:
-            assert type(dp) == dict, ("Each example should be a dictionary", dp)
-            assert "input" in dp and "options" in dp and type(dp["options"]) == list, \
-                ("Test example should contain input and options in a list format", dp)
-            if "output" not in dp:
-                dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
-            test_data.append(dp.copy())
-        for dp in _val_data:
-            assert type(dp) == dict, ("Each example should be a dictionary", dp)
-            assert "input" in dp and "options" in dp and type(dp["options"]) == list, \
-                ("Test example should contain input and options in a list format", dp)
-            if "output" not in dp:
-                dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
-            val_data.append(dp.copy())
-        
-        task = _test_data[0]["task"]
-        test_features_path = f"./features/{task}_test_features.json"
-        with open(test_features_path, "r") as file:
-            test_features = json.load(file)
-        val_features_path = f"./features/{task}_val_features.json"
-        with open(val_features_path, "r") as file:
-            val_features = json.load(file)
-        
-
-        if self.use_demonstrations:
-            test_texts = [dp["input"] + " " + dp["output"] for dp in test_data]
-            test_labels = [dp["output"] for dp in test_data]
-
-        input_ids, attention_mask, token_type_ids = [], [], []
-        metadata = []
-
-        for dp_idx, dp in enumerate(val_data):
-            inputs, outputs, answer = self._prepro_each_datapoint(
-                dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
-
-            if self.use_demonstrations:
-                test_text = dp["input"]
-                dp_feature = val_features[dp_idx]            
-
-                top_k_neighbors, top_k_indices, similarities = self._select_top_k_neighbors(
-                    dp_feature, test_features, test_data, self.k, dp_idx
-                )
-                
-                # print("similarities : ",similarities)
-
-                ranens = self._random_ensemble(
-                    embeddings=test_features,
-                    top_k_indices=top_k_indices,
-                    m=m, 
-                    candidate_labels=test_labels, 
-                    test_data=test_data,
-                    similarities = similarities,
-                    seed=seed
-                )
-
-                demonstrations = []
-                for i, neighbor_dp in enumerate(ranens):
-                    input_, output_ = self._prepro_each_datapoint(
-                        neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
-                    demonstrations += input_ + output_
-
-            indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
-
-            metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
-
-            for inputs_, outputs_ in zip(inputs, outputs):
-                if self.use_demonstrations:
-                    inputs_ = demonstrations + inputs_
-                encoded = prepro_sentence_pair_single(
-                    inputs_, outputs_, self.max_length, self.tokenizer, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
-                    allow_truncation=self.use_demonstrations
-                )
-                input_ids.append(encoded[0])
-                attention_mask.append(encoded[1])
-                token_type_ids.append(encoded[2])
-
-        self.tensorized_inputs = dict(input_ids=torch.LongTensor(input_ids),
-                                      attention_mask=torch.LongTensor(attention_mask),
-                                      token_type_ids=torch.LongTensor(token_type_ids))
-        self.metadata = metadata
-
-
-    def _theta_ensemble(self, embeddings, top_k_indices, m, candidate_labels, test_data, similarities, seed, temperature=0.1):
-
-        assert m <= len(top_k_indices), "Error: m must less than k"
-
-        all_combinations = list(combinations(top_k_indices, m))
-        random.seed(seed)
-        random.shuffle(all_combinations)
-
-        for idx in range(len(embeddings)):
-            embeddings[idx] = torch.tensor(embeddings[idx], dtype=torch.float32)
-            embeddings[idx] = embeddings[idx] / torch.norm(embeddings[idx])
-
-        all_loss_list = []
-
-        cnt_samples = int(len(all_combinations)/2)
-
-        for idx, combination in enumerate(all_combinations):
-            if idx >=cnt_samples: break
-            selected_embeddings = [embeddings[i] for i in combination]
-            selected_data = [test_data[i] for i in combination]
-
-            # compute simloss
-            simloss = 0.0
-            for idx in combination:
-                simloss+=similarities[idx]
-            simloss /= m
-            
-            # compute supcon loss
-            con_loss, pos_loss, all_loss = 0.0, 0.0, 0.0
-            for idx1 in combination:
-                cnt_pos = 0
-                pos_loss = 0.0
-                idx1_embedding, idx1_label = embeddings[idx1], candidate_labels[idx1]
-                logits = []
-                for idx2 in combination:
-                    if idx1 == idx2:
-                        continue
-                    idx2_embedding, idx2_label = embeddings[idx2], candidate_labels[idx2]
-                    similarity = torch.matmul(idx1_embedding, idx2_embedding) / temperature
-                    logits.append(similarity)
-                    if idx1_label == idx2_label:
-                        pos_loss += torch.exp(similarity)
-                        cnt_pos += 1
-                
-                logits = torch.tensor(logits)
-                logits_max = torch.max(logits)
-                logits = logits - logits_max.detach()
-                exp_logits = torch.exp(logits)
-                exp_logits_sum = exp_logits.sum()
-                
-                if cnt_pos > 0:
-                    pos_prob = pos_loss / exp_logits_sum 
-                    idx_loss = pos_prob / cnt_pos 
-                else:
-                    idx_loss = 1e-6
-                idx_loss = torch.tensor(idx_loss, dtype=torch.float32)
-                con_loss += -1.0 * torch.log(idx_loss)
-
-            current_labels = [candidate_labels[i] for i in combination]
-            lam=0.05
-            simcon_loss = -simloss + lam*con_loss
-            all_loss_list.append(simcon_loss)
-
-        X = np.zeros((cnt_samples, len(top_k_indices)))
-        y = np.zeros(cnt_samples)
-        model = LinearRegression()
-
-        for i, combination in enumerate(all_combinations):
-            if i >= cnt_samples: break
-            y[i] = all_loss_list[i]
-            for j, item in enumerate(top_k_indices):
-                if item in combination:
-                    X[i, j] = 1
-        
-        model.fit(X,y)
-        theta = model.coef_
-
-        selected_indices = set()
-        remaining_indices = set(range(len(top_k_indices)))
-
-        while len(selected_indices) < m:
-            best_candidate = None
-            best_loss = float('inf')
-
-            for idx in remaining_indices:
-                if idx in selected_indices:
-                    continue
-
-                temp_selected = selected_indices.union({idx})
-                temp_loss = 0.0
-
-                for i in temp_selected:
-                    temp_loss += theta[i]
-
-                if temp_loss < best_loss:
-                    best_loss = temp_loss
-                    best_candidate = idx
-
-            selected_indices.add(best_candidate)
-            remaining_indices.remove(best_candidate)
-
-        real_id = [top_k_indices[idx] for idx in selected_indices]
-
-        return [test_data[idx] for idx in real_id]
-        
     def _forward_selection(self, embeddings, top_k_indices, m, candidate_labels, test_data, similarities, seed, temperature=0.1):
         assert m <= len(top_k_indices), "Error: m must less than k"
 
@@ -1973,29 +1193,8 @@ class MetaICLData(object):
                                       token_type_ids=torch.LongTensor(token_type_ids))
         self.metadata = metadata
 
-    def synonym_augmentation(sentence, num_replacements=1):
-        words = sentence.split()
-        augmented_sentence = words.copy()
-        for _ in range(num_replacements):
-            word_to_replace = random.choice(words)
-            synonyms = wordnet.synsets(word_to_replace)
-            if synonyms:
-                synonym_words = [lemma.name() for syn in synonyms for lemma in syn.lemmas()]
-                if synonym_words:
-                    synonym = random.choice(synonym_words)
-                    augmented_sentence[words.index(word_to_replace)] = synonym.replace("_", " ")
-        return " ".join(augmented_sentence)
 
     def _select_random_k_neighbors(self, test_sample_embedding, test_embeddings, test_data, k, dp_idx):
-        # similarities = []
-        # for idx, dp in enumerate(test_embeddings):
-        #     if idx == len(test_data): break
-        #     if idx == dp_idx:
-        #         similarities.append(-1.0)
-        #         continue
-        #     similarity = 1 - cosine(test_sample_embedding, dp)
-        #     similarities.append(similarity)
-        # random_indices = np.argsort(similarities)[:k][::-1]
         length = len(test_data)
         candidates = [i for i in range(length) if i!= dp_idx]
         random_indices = random.sample(candidates, k)
@@ -2005,30 +1204,17 @@ class MetaICLData(object):
     def tensorize_randomk(self, _test_data, _val_data, options=None, add_newlines=True):
         if options is not None:
             for i, dp in enumerate(_test_data):
-                print(i,dp)
-                assert "options" not in dp
-                assert type(dp) == str
                 _test_data[i] = {"input": dp, "options": options}
             for i, dp in enumerate(_val_data):
-                assert "options" not in dp
-                assert type(dp) == str
                 _val_data[i] = {"input": dp, "options": options}
-        print("len(_test_data) : ",len(_test_data))
-        print("len(_val_data) : ", len(_val_data))
 
         val_data, test_data =  [], []
 
         for dp in _test_data:
-            assert type(dp) == dict, ("Each example should be a dictionary", dp)
-            assert "input" in dp and "options" in dp and type(dp["options"]) == list, \
-                ("Test example should contain input and options in a list format", dp)
             if "output" not in dp:
                 dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
             test_data.append(dp.copy())
         for dp in _val_data:
-            assert type(dp) == dict, ("Each example should be a dictionary", dp)
-            assert "input" in dp and "options" in dp and type(dp["options"]) == list, \
-                ("Test example should contain input and options in a list format", dp)
             if "output" not in dp:
                 dp["output"] = dp["options"][0]  # randomly choose one (we don't need it anyways)
             val_data.append(dp.copy())
@@ -2059,7 +1245,7 @@ class MetaICLData(object):
                 for i, neighbor_dp in enumerate(top_k_neighbors):
                     input_, output_ = self._prepro_each_datapoint(
                         neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
-                    demonstrations += input_ + output_
+                    demonstrations += input_[1:] + output_[1:]
 
             indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
 
@@ -2067,9 +1253,10 @@ class MetaICLData(object):
 
             for inputs_, outputs_ in zip(inputs, outputs):
                 if self.use_demonstrations:
-                    inputs_ = demonstrations + inputs_
+                    inputs_ = demonstrations + inputs_[1:]
+                # print(f"output_[1]: {self.tokenizer.decode(output_[1])}, output_[2]: {self.tokenizer.decode(output_[2])}")
                 encoded = prepro_sentence_pair_single(
-                    inputs_, outputs_, self.max_length, self.tokenizer, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
+                    inputs_, [outputs_[2]], self.max_length, self.tokenizer, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
                     allow_truncation=self.use_demonstrations
                 )
                 input_ids.append(encoded[0])
@@ -2081,14 +1268,6 @@ class MetaICLData(object):
                                       token_type_ids=torch.LongTensor(token_type_ids))
         self.metadata = metadata
 
-
-    def _random_datasource(self, task, datapath, m):
-        with open(datapath, "r") as file:
-            data = [json.loads(line) for line in file]
-        
-        candidates = [item for item in data if item['task']!=task]
-        output = random.sample(candidates, m)
-        return output
 
     def tensorize(self, _train_data, _test_data, options=None,
                   add_newlines=True):
@@ -2179,6 +1358,7 @@ class MetaICLData(object):
         if self.local_rank<=0:
             self.logger.info(text)
 
+
 def prepro_sentence_pair_single_(ids1, ids2, max_length, tokenizer,
                                 bos_token_id, eos_token_id,
                                 allow_truncation=False):
@@ -2203,11 +1383,11 @@ def prepro_sentence_pair_single(ids1, ids2, max_length,
     #print(tokenizer.all_special_ids)
     special_ids = set(tokenizer.all_special_ids)
     #special_ids.extend([128000, 128001])
-    print("************************")
-    print("ids1: ",ids1)
-    print("decode(ids1): ",tokenizer.decode(ids1))
-    print("ids2: ",ids2)
-    print("decode(ids2): ",tokenizer.decode(ids2))
+    # print("************************")
+    # print("ids1: ",ids1)
+    # print("decode(ids1): ",tokenizer.decode(ids1))
+    # print("ids2: ",ids2)
+    # print("decode(ids2): ",tokenizer.decode(ids2))
 
     ids1 = [i for i in ids1 if i not in special_ids]
     ids2 = [i for i in ids2 if i not in special_ids]
@@ -2216,7 +1396,6 @@ def prepro_sentence_pair_single(ids1, ids2, max_length,
     total_len = len(ids1) + len(ids2) + 2  # +2 for bos and eos
 
     if allow_truncation and total_len > max_length:
-        # Truncate from the beginning of ids1
         overflow = total_len - max_length
         ids1 = ids1[overflow:]
         total_len = len(ids1) + len(ids2) + 2
@@ -2235,10 +1414,13 @@ def prepro_sentence_pair_single(ids1, ids2, max_length,
     # Token type ids: 0 for ids1, 1 for ids2, 0 for bos and eos (you can adjust this)
     token_type_ids = [0] + [0] * len(ids1) + [1] * len(ids2) + [0] + [0] * n_pad
 
-    print("input_ids: ",input_ids)
-    print("tokenizer.decode(input_ids): ",tokenizer.decode(input_ids))
-    print("token_type_ids: ",token_type_ids)
-    print("------------------------")
+    # print("input_ids: ",input_ids)
+    # print("tokenizer.decode(input_ids): ",tokenizer.decode(input_ids, skip_special_tokens=True))
+    # # print("token_type_ids: ", token_type_ids)
+    # for idx, token_type in enumerate(token_type_ids):
+    #     if token_type==1:
+    #         print(f"token: {input_ids[idx]}, token.decode: {tokenizer.decode(input_ids[idx])}")
+    # print("------------------------")
     return input_ids, attention_mask, token_type_ids
 
 
