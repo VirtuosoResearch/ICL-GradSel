@@ -92,6 +92,7 @@ class MetaICLModel(object):
             checkpoint = None
         # self.logger.info(f"--is_quant : {is_quant}")
         if "deepseek" in gpt2: is_quant=True
+        if "8B" in gpt2 or "13b" in gpt2 or "34" in gpt2: is_quant=True
         if is_quant:
             bnb_config = BitsAndBytesConfig(
                 load_in_4bit=True,
@@ -131,7 +132,7 @@ class MetaICLModel(object):
         dataloader = data.get_dataloader(batch_size, is_training=False)
         losses = []
         n = 0
-        for idx, batch in enumerate(dataloader):
+        for idx, batch in tqdm(enumerate(dataloader), total=len(dataloader)):
             input_ids=batch[0].cuda()
             attention_mask=batch[1].cuda()
             token_type_ids=batch[2].cuda()
@@ -157,29 +158,26 @@ class MetaICLModel(object):
 
         assert len(losses)==len(data)
         predictions = []
-        for idx, dp in enumerate(data.metadata):
-            # print("---------------------------------------")
-            # print(dp)
+        for idx, dp in tqdm(enumerate(data.metadata), total=len(data.metadata)):
             curr_label_losses = [np.sum(losses[indices]) for indices in dp["indices"]]
             prediction_idx = sorted(enumerate(curr_label_losses), key=lambda x: x[1])[0][0]
             prediction = dp["options"][prediction_idx]
             predictions.append(prediction.strip())
-        # print("len(data.metadata) : ",len(data.metadata))
         return predictions
 
     def run_model(self, input_ids, attention_mask, token_type_ids, labels=None):
+        # print("self.tokenizer: ",self.tokenizer)
+        # print("input_ids: ", input_ids[0])
+        # print("input_ids_text: ", self.tokenizer.decode(input_ids[0]))
         outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
 
         logits = outputs.logits[..., :-1, :].contiguous()
-        #print(logits.shape)
-        #print(labels.shape)
         if labels is None:
             labels = input_ids
         labels = labels[..., 1:].contiguous()
         label_mask = token_type_ids[..., 1:].contiguous()
 
         loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
-        #print(loss_fct.shape)
         losses = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1)) # [batch_size, length]
 
         losses = losses.view(logits.size(0), logits.size(1)) * label_mask

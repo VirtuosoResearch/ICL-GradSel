@@ -35,6 +35,9 @@ def main(logger, args):
         tokenizer = AutoTokenizer.from_pretrained(args.gpt2)
     else:
         tokenizer = AutoTokenizer.from_pretrained("gpt2")
+
+    if tokenizer.padding_side=="left":
+        tokenizer.padding_side = "right"
     add_newlines = True
     if "Llama" in args.gpt2:
         special_tokens = {
@@ -63,7 +66,7 @@ def main(logger, args):
             args.gpt2 = args.checkpoint
         checkpoint = None
     
-    metaicl_model = MetaICLModel(args.device, logger, args.out_dir)
+    metaicl_model = MetaICLModel(args.device, logger, args.out_dir,gpt2=args.gpt2)
 
     if not os.path.exists(args.out_dir):
         os.makedirs(args.out_dir)
@@ -112,6 +115,7 @@ def main(logger, args):
         if is_classification:
             options = test_data[0]["options"]
             assert np.all([d["options"]==options for d in test_data])
+
         result = run(logger, test_task, metaicl_data, metaicl_model,
                      test_data, val_data, seed, checkpoint, is_classification, add_newlines, tokenizer)
         if result is None:
@@ -180,16 +184,10 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
     if args.use_calibration:
         prediction_path = prediction_path.replace(".txt", "-calibrated.txt")
 
-
-    # if os.path.exists(cache_path):
-    #     with open(cache_path, "rb") as f:
-    #         losses = pkl.load(f)
-    # else:
     if metaicl_model.is_none():
         metaicl_model.load(checkpoint, gpt2=args.gpt2, is_quant=args.is_quant)
         metaicl_model.cuda()
         metaicl_model.eval()
-
     if "Llama" in args.gpt2:
         metaicl_model.resize(tokenizer)
 
@@ -199,7 +197,6 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
         pkl.dump(losses, f)
 
     logger.info(f"len(losses): {len(losses)}; len(metaicl_data): {len(metaicl_data)}")
-    # assert len(losses)==len(metaicl_data)
 
     if args.is_null:
         return None

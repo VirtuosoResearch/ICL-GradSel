@@ -741,6 +741,7 @@ class MetaICLData(object):
                 recalls[groundtruth].append(is_correct)
                 precisions[prediction].append(is_correct)
 
+        self.logger.info(f"accuracy: {np.mean(accs)}")
         if not is_classification:
             return np.mean(accs)
 
@@ -863,8 +864,8 @@ class MetaICLData(object):
                 demonstrations = []
                 for i, neighbor_dp in enumerate(top_k_neighbors):
                     # print("neighbor_dp: ",neighbor_dp)
-                    neighbor_dp["input"] = "input: " + neighbor_dp["input"]
-                    neighbor_dp["output"] = "output: "+ neighbor_dp["output"]
+                    # neighbor_dp["input"] = "input: " + neighbor_dp["input"]
+                    # neighbor_dp["output"] = "output: "+ neighbor_dp["output"]
                     input_, output_ = self._prepro_each_datapoint( # for_demonstrations is True!!
                         neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
                     demonstrations += input_[1:] + output_[1:]
