@@ -493,7 +493,6 @@ class MetaICLData(object):
 
         return best_demonstrations, best_candidate_accuracy, total_flops
 
-    
     def _select_top_k_neighbors(self, test_sample_embedding, test_embeddings, test_data, k, dp_idx):
         similarities = []
         for idx, dp in enumerate(test_embeddings):
@@ -577,7 +576,8 @@ class MetaICLData(object):
                 dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
             # print("*********** seperate ***********")
             if self.use_demonstrations:
-                demonstrations = init_tokens
+                # demonstrations = init_tokens
+                demonstrations = []
                 for i, neighbor_dp in enumerate(ground):
                     # print("neighbor_dp: ",neighbor_dp)
                     # neighbor_dp["input"] = "input: " + neighbor_dp["input"]
@@ -690,8 +690,6 @@ class MetaICLData(object):
             assert dp["output"] in dp["options"]
             option_tokens = [self.tokenizer(option)["input_ids"] for option in dp["options"]]
 
-            # que_tokens = self.tokenizer("\nHere is the query input: ")["input_ids"]
-            # input_tokens = [que_tokens + input_tokens[1:] for _ in option_tokens]
             input_tokens = [input_tokens for _ in option_tokens]
             output_tokens = option_tokens
             option_tokens = [dp["options"].index(dp["output"])]
@@ -751,9 +749,6 @@ class MetaICLData(object):
 
                 demonstrations = init_tokens
                 for i, neighbor_dp in enumerate(top_k_neighbors):
-                    # print("neighbor_dp: ",neighbor_dp)
-                    # neighbor_dp["input"] = "input: " + neighbor_dp["input"]
-                    # neighbor_dp["output"] = "output: "+ neighbor_dp["output"]
                     input_, output_ = self._prepro_each_datapoint( # for_demonstrations is True!!
                         neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
                     demonstrations += input_[1:] + output_[1:]
@@ -836,9 +831,6 @@ class MetaICLData(object):
 
                 demonstrations = init_tokens
                 for i, neighbor_dp in enumerate(random_k_neighbors):
-                    # print("neighbor_dp: ",neighbor_dp)
-                    # neighbor_dp["input"] = "input: " + neighbor_dp["input"]
-                    # neighbor_dp["output"] = "output: "+ neighbor_dp["output"]
                     input_, output_ = self._prepro_each_datapoint( # for_demonstrations is True!!
                         neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
                     demonstrations += input_[1:] + output_[1:]
