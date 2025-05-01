@@ -131,7 +131,7 @@ class MetaICLModel(object):
         dataloader = data.get_dataloader(batch_size, is_training=False)
         losses = []
         n = 0
-        for idx, batch in enumerate(dataloader):
+        for batch in tqdm(dataloader):
             input_ids=batch[0].cuda()
             attention_mask=batch[1].cuda()
             token_type_ids=batch[2].cuda()
@@ -171,16 +171,28 @@ class MetaICLModel(object):
         outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
 
         logits = outputs.logits[..., :-1, :].contiguous()
-        #print(logits.shape)
-        #print(labels.shape)
+        # input  is  y1,     y2,     y3,     y4
+        # output is  y2_hat, y3_hat, y4_hat, y5_hat (logits here)
+        # labels is  y2,     y3,     y4,     y5
+        # here y2_hat is a vector (size is [vocab]), we will calculate the CE loss on y2_hat and y2.
+        # print("logits: ",logits.shape)
+        # print("label.size: ",labels.size)
         if labels is None:
             labels = input_ids
         labels = labels[..., 1:].contiguous()
         label_mask = token_type_ids[..., 1:].contiguous()
 
+        nonzero_indices = torch.nonzero(label_mask, as_tuple=False)
+        # print("nonzero_indices: ",nonzero_indices)
+        # for indice in nonzero_indices:
+        #     print("label: ",self.tokenizer.decode(labels[0][indice[1]]))
+
         loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
         #print(loss_fct.shape)
         losses = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1)) # [batch_size, length]
+
+        # print("losses.shape : ",losses.shape)
+        # print("losses: ",losses)
 
         losses = losses.view(logits.size(0), logits.size(1)) * label_mask
         return torch.sum(losses, axis=1) / torch.sum(label_mask, axis=1)
