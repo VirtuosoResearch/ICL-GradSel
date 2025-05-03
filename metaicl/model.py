@@ -173,8 +173,16 @@ class MetaICLModel(object):
         labels = labels[..., 1:].contiguous()
         label_mask = token_type_ids[..., 1:].contiguous()
 
+        nonzero_indices = torch.nonzero(label_mask, as_tuple=False)
+        # print("nonzero_indices: ",nonzero_indices)
+        # for indice in nonzero_indices:
+        #     print("label: ",self.tokenizer.decode(labels[0][indice[1]]))
+
         loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
         losses = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1)) # [batch_size, length]
+
+        # print("losses.shape : ",losses.shape)
+        # print("losses: ",losses)
 
         losses = losses.view(logits.size(0), logits.size(1)) * label_mask
         return torch.sum(losses, axis=1) / torch.sum(label_mask, axis=1)

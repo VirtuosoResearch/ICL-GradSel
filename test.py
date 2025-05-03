@@ -126,7 +126,7 @@ def main(logger, args):
     if args.is_null:
         return
 
-    logger.info("Macro-F1 of %s over %d target tasks: %.1f" % (args.task, len(results) // len(seeds), 100*np.mean(results)))
+    # logger.info("Macro-F1 of %s over %d target tasks: %.1f" % (args.task, len(results) // len(seeds), 100*np.mean(results)))
 
     if len(errors)>0:
         logger.info("You had errors with datasets:", ",".join(errors))
@@ -183,6 +183,22 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
     if "Llama" in args.gpt2:
         metaicl_model.resize(tokenizer)
 
+    # dataloader = metaicl_data.get_dataloader(4, is_training=False)
+    # self.logger.info(f"len(dataloader) : {len(dataloader)}")
+    losses = []
+    n = 0
+    # for idx, batch in enumerate(dataloader):
+    #     if idx==4: break
+    #     input_ids=batch[0].cuda()
+    #     attention_mask=batch[1].cuda()
+    #     token_type_ids=batch[2].cuda()
+        # logger.info(input_ids.size())
+        # logger.info("-------INPUT-------")
+        # logger.info(tokenizer.decode(input_ids[0]))
+        # logger.info("------------------")
+        # logger.info(tokenizer.decode(input_ids[1]))
+        # logger.info("------------------")
+
     losses = metaicl_model.do_inference(metaicl_data, args.test_batch_size)
         
     with open(cache_path, "wb") as f:
@@ -208,7 +224,7 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
     predictions = metaicl_model.do_predict(metaicl_data, losses=losses)
     groundtruths = [dp["output"] for dp in val_data]
     perf = metaicl_data.evaluate(predictions, groundtruths, is_classification)
-    logger.info("Accuracy=%s" % perf)
+    print("Accuracy=", perf)
 
     with open(prediction_path, "w") as f:
         for prediction in predictions:
