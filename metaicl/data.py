@@ -17,6 +17,7 @@ import random
 from itertools import combinations
 import warnings
 import torch.nn.functional as F
+from collections import Counter
 warnings.filterwarnings("ignore", category=UserWarning)
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers import GPT2LMHeadModel, GPT2Tokenizer, OPTForCausalLM
@@ -46,8 +47,8 @@ from metaicl.model import MetaICLModel
 
 class MetaICLData(object):
 
-    def __init__(self, device=0, logger=None, tokenizer=None, method="channel", use_demonstrations=True, k=16, max_length=1024,
-                 do_tensorize=False, tensorize_dir=None, n_process=None, n_gpu=None, local_rank=-1, is_flops=False):
+    def __init__(self, device=0, logger=None, tokenizer=None, method="direct", use_demonstrations=True, k=16, max_length=1024,
+                 do_tensorize=False, tensorize_dir=None, seed=0, n_process=None, n_gpu=None, local_rank=-1, is_flops=False):
 
         self.logger = logger
         self.tokenizer = tokenizer
@@ -55,7 +56,7 @@ class MetaICLData(object):
         self.use_demonstrations = use_demonstrations
         self.k = k
         self.max_length = max_length
-
+        self.seed = seed
         self.do_tensorize = do_tensorize
         self.tensorize_dir = tensorize_dir
         self.n_process = n_process
@@ -505,7 +506,7 @@ class MetaICLData(object):
         top_k_indices = np.argsort(similarities)[-k:][::-1]
         return [test_data[i] for i in top_k_indices], top_k_indices , similarities
     
-    def tensorize_estimate(self, gpt2, _test_data, _val_data, is_quant, pseudo_k=3, options=None, add_newlines=True):
+    def tensorize_estimate(self, gpt2, _test_data, _val_data, is_quant, method="forsel", pseudo_k=3, options=None, add_newlines=True):
         print("options: ", options)
         if options is not None:
             print(_test_data[0])
@@ -566,8 +567,12 @@ class MetaICLData(object):
 
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
-        
-        ground, _, flops = self.greedy_select_subset2(gpt2=gpt2, metaicl_model=metaicl_model, test_data=test_data, dev_data=psudo_data)
+        if method == "forsel":
+            print("11111111111111111111111")
+            ground, _, flops = self.greedy_select_subset2(gpt2=gpt2, metaicl_model=metaicl_model, test_data=test_data, dev_data=psudo_data)
+        else:
+            print("22222222222222222222222")
+            ground, _, flops = self.random_ensemble(gpt2=gpt2, metaicl_model=metaicl_model, test_data=test_data, dev_data=psudo_data)
         demonstrations = []
 
         total_flops+= flops
@@ -604,6 +609,93 @@ class MetaICLData(object):
                                       attention_mask=torch.LongTensor(attention_mask),
                                       token_type_ids=torch.LongTensor(token_type_ids))
         self.metadata = metadata
+
+    def random_ensemble(self, gpt2, metaicl_model, test_data, dev_data, num_combinations=100, k=8, seed=42):
+        random.seed(seed)
+        device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
+
+        all_indices = list(range(len(test_data)))
+
+        def sample_unique_combinations(all_indices, k, num_combinations, seed=42):
+            random.seed(seed)
+            seen = set()
+            combinations = []
+            max_trials = num_combinations * 10 
+            trials = 0
+            while len(combinations) < num_combinations and trials < max_trials:
+                comb = tuple(sorted(random.sample(all_indices, k)))
+                if comb not in seen:
+                    seen.add(comb)
+                    combinations.append(comb)
+                trials += 1
+
+            if len(combinations) < num_combinations:
+                print(f"Warning: only sampled {len(combinations)} unique combinations out of requested {num_combinations}")
+            
+            return combinations
+        
+        sampled_combinations = sample_unique_combinations(all_indices, self.k, num_combinations, seed=seed)
+
+        anchor_comb = random.choice(sampled_combinations)
+        anchor_prompt = "".join([
+            f"Input: {test_data[idx]['input']} Label: {test_data[idx]['output']}\n" for idx in anchor_comb
+        ])
+        base_losses, base_gradients, _, flops = zip(*[
+            self.forward_estim(gpt2, metaicl_model, anchor_prompt, dp, dp["task"], return_loss=True)
+            for dp in dev_data
+        ])
+        total_flops = sum(flops)
+
+        base_loss_tensor = torch.tensor(base_losses, device=device)
+        grad_tensor = torch.stack([torch.stack(g, dim=0) for g in base_gradients], dim=0)  # [len(dev), num_labels, D]
+
+        # Step 3: For the other 99 combinations, estimate with Taylor
+        accuracy_results = []
+        for comb in tqdm(sampled_combinations, total=len(sampled_combinations)):
+            if comb == anchor_comb:
+                continue
+
+            target_prompt = "".join([
+                f"Input: {test_data[idx]['input']} Label: {test_data[idx]['output']}\n" for idx in comb
+            ])
+
+            correct = 0
+            for dp_idx, dp in enumerate(dev_data):
+                dev_str = f"Input: {dp['input']} Label:"
+                delta_P = self.compute_embedding_difference_(
+                    gpt2, metaicl_model, anchor_prompt + dev_str, target_prompt + dev_str
+                )
+
+                taylor_losses = []
+                for j in range(len(base_loss_tensor[dp_idx])):  # over labels
+                    correction = torch.sum(grad_tensor[dp_idx][j] * delta_P).item()
+                    approx_loss = base_loss_tensor[dp_idx][j].item() + correction
+                    taylor_losses.append(approx_loss)
+
+                pred_id = np.argmin(taylor_losses)
+                pred = dp["options"][pred_id]
+                if pred == dp["output"]:
+                    correct += 1
+
+            acc = correct / len(dev_data)
+            accuracy_results.append((comb, acc))
+
+        point_scores = {i: [] for i in range(len(test_data))}
+
+        for comb, acc in accuracy_results:
+            for idx in comb:
+                point_scores[idx].append(acc)
+
+        avg_scores = []
+        for idx, scores in point_scores.items():
+            if scores:
+                avg_scores.append((idx, sum(scores) / len(scores)))
+
+        avg_scores.sort(key=lambda x: -x[1])
+        final_indices = [idx for idx, _ in avg_scores[:self.k]]
+        selected_data = [test_data[i] for i in final_indices]
+
+        return selected_data, accuracy_results[0][1], total_flops
 
     def get_dataloader(self, batch_size, is_training):
         inputs = self.tensorized_inputs
@@ -740,6 +832,8 @@ class MetaICLData(object):
             inputs, outputs, answer = self._prepro_each_datapoint( # for_demonstrations is Talse!!
                 dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
             # print("*********** seperate ***********")
+            demonstrations = init_tokens
+            if self.k==0: self.max_length=128
             if self.use_demonstrations:
                 dp_feature = val_features[dp_idx]            
 
@@ -747,7 +841,7 @@ class MetaICLData(object):
                     dp_feature, test_features, test_data, self.k, dp_idx
                 )
 
-                demonstrations = init_tokens
+
                 for i, neighbor_dp in enumerate(top_k_neighbors):
                     input_, output_ = self._prepro_each_datapoint( # for_demonstrations is True!!
                         neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
@@ -777,6 +871,7 @@ class MetaICLData(object):
 
 
     def _select_random_k_neighbors(self, test_sample_embedding, test_embeddings, test_data, k, dp_idx):
+        random.seed(self.seed)
         length = len(test_data)
         candidates = [i for i in range(length) if i!= dp_idx]
         random_indices = random.sample(candidates, k)
@@ -957,9 +1052,12 @@ def prepro_sentence_pair_single(ids1, ids2, max_length,
     ids2 = [i for i in ids2 if i not in special_ids]
 
     # Add bos and eos tokens later, so leave space for them
+    # print("len(ids1): ",len(ids1),"len(ids2): ", len(ids2))
     total_len = len(ids1) + len(ids2) + 2  # +2 for bos and eos
 
     if allow_truncation and total_len > max_length:
+        # print("total_len: ",total_len)
+        # print("max_len: ",max_length)
         overflow = total_len - max_length
         ids1 = ids1[overflow:]
         total_len = len(ids1) + len(ids2) + 2
