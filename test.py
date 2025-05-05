@@ -88,7 +88,7 @@ def main(logger, args):
         args.test_batch_size, max_length, max_length_per_example))
 
     metaicl_data = MetaICLData(args.device ,logger, tokenizer, args.method,args.use_demonstrations, args.k,
-                               max_length, is_flops=args.is_flops)
+                               max_length=max_length, seed=args.seed, is_flops=args.is_flops)
     # metaicl_data.to(device)
     results = []
     errors = []
@@ -163,21 +163,14 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
         metaicl_data.tensorize_topk(test_data, val_data, options=None, add_newlines=add_newlines)
     elif args.randomk:
         metaicl_data.tensorize_randomk(test_data, val_data, options=None,  add_newlines=add_newlines)
-    elif args.supcon:
-        metaicl_data.tensorize_supcon(test_data, val_data, args.m, options=None,  add_newlines=add_newlines)
     elif args.ground:
         metaicl_data.tensorize_ground(args.gpt2, test_data, val_data, options=None,  add_newlines=add_newlines)
-    elif args.unlabeled:
-        metaicl_data.tensorize_unlabeled(args.gpt2, test_data, val_data,args.m, options=None,  add_newlines=add_newlines)
-    elif args.multidata:
-        metaicl_data.tensorize_multidata(test_data, val_data, datapath, args.m, options=None, add_newlines=add_newlines)
-    elif args.ranens:
-        metaicl_data.tensorize_ranens(test_data, val_data, args.m, args.seed, options=None, add_newlines=add_newlines)
     elif args.forsel:
-        metaicl_data.tensorize_forsel(test_data, val_data, args.m, args.seed, options=None, add_newlines=add_newlines)
-    elif args.estim:
-        metaicl_data.tensorize_estimate(args.gpt2, test_data, val_data, args.is_quant,pseudo_k=args.pseudo_k, options=None,  add_newlines=add_newlines)
-
+        metaicl_data.tensorize_estimate(args.gpt2, test_data, val_data, args.is_quant,pseudo_k=args.pseudo_k, method="forsel", options=None,  add_newlines=add_newlines)
+    elif args.ranens:
+        metaicl_data.tensorize_estimate(args.gpt2, test_data, val_data, args.is_quant,pseudo_k=args.pseudo_k, method="ranens", options=None,  add_newlines=add_newlines)
+    elif args.bm25:
+        metaicl_data.tensorize_bm25(test_data, val_data, options=None, add_newlines=add_newlines)
     metaicl_data.print_tensorized_example()
     logger.info(cache_path)
     prediction_path = cache_path.replace(".pkl", ".txt")
@@ -254,7 +247,7 @@ if __name__=='__main__':
     parser.add_argument("--task", type=str, default=None)
     parser.add_argument("--dataset", type=str, default=None)
     parser.add_argument("--k", type=int, default=16)
-    parser.add_argument("--seed", type=str, default="100")
+    parser.add_argument("--seed", type=str, default="0")
 
     parser.add_argument("--test_batch_size", type=int, default=64)
     parser.add_argument("--global_step", type=str, default=None)
