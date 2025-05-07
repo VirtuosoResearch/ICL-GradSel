@@ -45,6 +45,33 @@ from sklearn.linear_model import LinearRegression
 
 from utils.data import load_data
 from metaicl.model import MetaICLModel
+from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
+
+
+class OpenLLMEvaluator:
+    def __init__(self, model_name="deepseek-ai/deepseek-llm-7b-chat"):
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_name, torch_dtype=torch.bfloat16, device_map="auto"
+        )
+        self.model.generation_config = GenerationConfig.from_pretrained(model_name)
+        self.model.generation_config.pad_token_id = self.model.generation_config.eos_token_id
+
+    def query(self, question: str, examples: list = []) -> str:
+        messages = []
+        for inp, out in examples:
+            messages.append({"role": "user", "content": inp})
+            messages.append({"role": "assistant", "content": out})
+        messages.append({"role": "user", "content": question})
+
+        input_tensor = self.tokenizer.apply_chat_template(
+            messages, add_generation_prompt=True, return_tensors="pt"
+        ).to(self.model.device)
+
+        outputs = self.model.generate(input_tensor, max_new_tokens=100)
+        result = self.tokenizer.decode(outputs[0][input_tensor.shape[1]:], skip_special_tokens=True)
+        return result.strip()
+
 
 class MetaICLData(object):
 
@@ -869,6 +896,99 @@ class MetaICLData(object):
         self.metadata = metadata
 
 
+    def _select_top_k_neighbors_bm25(self, query_text, candidate_data, k):
+        corpus = [dp["input"] for dp in candidate_data]
+        tokenized_corpus = [doc.split() for doc in corpus]
+        bm25 = BM25Okapi(tokenized_corpus)
+        tokenized_query = query_text.split()
+        scores = bm25.get_scores(tokenized_query)
+        topk_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:k]
+        return [candidate_data[i] for i in topk_indices], topk_indices, scores
+
+    def tensorize_uncertainty_rank(self, _test_data, _val_data, options=None, add_newlines=True):
+        if options is not None:
+            for i, dp in enumerate(_test_data):
+                _test_data[i] = {"input": dp, "options": options}
+            for i, dp in enumerate(_val_data):
+                _val_data[i] = {"input": dp, "options": options}
+
+        val_data, dev_data, test_data = [], [], []
+        for dp in _test_data:
+            if "output" not in dp:
+                dp["output"] = dp["options"][0]
+            test_data.append(dp.copy())
+        for idx, dp in enumerate(_val_data):
+            if "output" not in dp:
+                dp["output"] = dp["options"][0]
+            if idx <= 50:
+                dev_data.append(dp.copy())
+            val_data.append(dp.copy())
+
+        task = _test_data[0]["task"]
+        with open(f"./features/{task}_test_features.json", "r") as file:
+            test_features = json.load(file)
+        with open(f"./features/{task}_val_features.json", "r") as file:
+            val_features = json.load(file)
+
+        llm = OpenLLMEvaluator()
+        input_ids, attention_mask, token_type_ids = [], [], []
+        metadata = []
+
+        sample_scores = {}
+        for dev_dp in tqdm(dev_data):
+            candidates, _, _ = self._select_top_k_neighbors_bm25(dev_dp["input"], test_data, k=20)
+            rewards = []
+            for j in range(len(candidates)):
+                prompt_examples = [(x["input"], x["output"]) for x in candidates[:j+1]]
+                pred = llm.query(dev_dp["input"], prompt_examples)
+                reward = int(pred.strip().lower() == dev_dp["output"].strip().lower()) * 2 - 1
+                rewards.append(reward)
+            for j, r in enumerate(rewards):
+                idx = j
+                cand = candidates[idx]
+                key = cand["input"] + "||" + cand["output"]
+                sample_scores[key] = sample_scores.get(key, 0) + r
+
+        for dp_idx, dp in tqdm(enumerate(val_data), total=len(val_data)):
+            inputs, outputs, answer = self._prepro_each_datapoint(
+                dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
+
+            if self.use_demonstrations:
+                candidates, _, _ = self._select_top_k_neighbors_bm25(dp["input"], test_data, k=20)
+                for cand in candidates:
+                    key = cand["input"] + "||" + cand["output"]
+                    cand["score"] = sample_scores.get(key, -999)
+                sorted_candidates = sorted(candidates, key=lambda x: x["score"], reverse=True)
+                selected = sorted_candidates[:self.k]
+
+                demonstrations = []
+                for i, neighbor_dp in enumerate(selected):
+                    input_, output_ = self._prepro_each_datapoint(
+                        neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
+                    demonstrations += input_ + output_
+
+            indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
+            metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
+
+            for inputs_, outputs_ in zip(inputs, outputs):
+                if self.use_demonstrations:
+                    inputs_ = demonstrations + inputs_
+                encoded = prepro_sentence_pair_single(
+                    inputs_, outputs_, self.max_length, self.tokenizer,
+                    self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
+                    allow_truncation=self.use_demonstrations
+                )
+                input_ids.append(encoded[0])
+                attention_mask.append(encoded[1])
+                token_type_ids.append(encoded[2])
+
+        self.tensorized_inputs = dict(
+            input_ids=torch.LongTensor(input_ids),
+            attention_mask=torch.LongTensor(attention_mask),
+            token_type_ids=torch.LongTensor(token_type_ids)
+        )
+        self.metadata = metadata
+
     def _select_random_k_neighbors(self, test_sample_embedding, test_embeddings, test_data, k, dp_idx):
         random.seed(self.seed)
         length = len(test_data)
@@ -989,7 +1109,7 @@ class MetaICLData(object):
             if self.use_demonstrations:
                 query_terms = dp["input"].split()
                 scores = bm25.get_scores(query_terms)
-                scores[dp_idx] = -1e9  # 忽略自身
+                scores[dp_idx] = -1e9
 
                 topk_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:self.k]
                 top_k_neighbors = [test_data[i] for i in topk_indices]

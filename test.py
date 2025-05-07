@@ -270,6 +270,7 @@ if __name__=='__main__':
     parser.add_argument("--ranens", default=False, action="store_true")
     parser.add_argument("--forsel", default=False, action="store_true")
     parser.add_argument("--estim", default=False, action="store_true")
+    parser.add_argument("--bm25", default=False, action="store_true")
     parser.add_argument("--m", type=int, default=4)
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--is_quant", default=False, action="store_true")
