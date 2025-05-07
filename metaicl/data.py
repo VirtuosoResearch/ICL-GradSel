@@ -654,32 +654,35 @@ class MetaICLData(object):
                     seen.add(comb)
                     combinations.append(comb)
                 trials += 1
-
-            if len(combinations) < num_combinations:
-                print(f"Warning: only sampled {len(combinations)} unique combinations out of requested {num_combinations}")
-            
             return combinations
-        
-        sampled_combinations = sample_unique_combinations(all_indices, self.k, num_combinations, seed=seed)
 
-        anchor_comb = random.choice(sampled_combinations)
-        anchor_prompt = "".join([
-            f"Input: {test_data[idx]['input']} Label: {test_data[idx]['output']}\n" for idx in anchor_comb
-        ])
-        base_losses, base_gradients, _, flops = zip(*[
-            self.forward_estim(gpt2, metaicl_model, anchor_prompt, dp, dp["task"], return_loss=True)
-            for dp in dev_data
-        ])
-        total_flops = sum(flops)
+        sampled_combinations = sample_unique_combinations(all_indices, k, num_combinations, seed=seed)
 
-        base_loss_tensor = torch.tensor(base_losses, device=device)
-        grad_tensor = torch.stack([torch.stack(g, dim=0) for g in base_gradients], dim=0)  # [len(dev), num_labels, D]
+        anchor_combs = random.sample(sampled_combinations, 5)
+        anchor_info = {}
 
-        # Step 3: For the other 99 combinations, estimate with Taylor
+        total_flops = 0
+        for anchor in anchor_combs:
+            anchor_prompt = "".join([
+                f"Input: {test_data[idx]['input']} Label: {test_data[idx]['output']}\n" for idx in anchor
+            ])
+            base_losses, base_gradients, _, flops = zip(*[
+                self.forward_estim(gpt2, metaicl_model, anchor_prompt, dp, dp["task"], return_loss=True)
+                for dp in dev_data
+            ])
+            total_flops += sum(flops)
+
+            loss_tensor = torch.tensor(base_losses, device=device)
+            grad_tensor = torch.stack([torch.stack(g, dim=0) for g in base_gradients], dim=0)  # [len(dev), num_labels, D]
+            anchor_info[anchor] = (anchor_prompt, loss_tensor, grad_tensor)
+
         accuracy_results = []
         for comb in tqdm(sampled_combinations, total=len(sampled_combinations)):
-            if comb == anchor_comb:
+            if comb in anchor_combs:
                 continue
+
+            best_anchor = max(anchor_combs, key=lambda a: len(set(a) & set(comb)))
+            anchor_prompt, base_loss_tensor, grad_tensor = anchor_info[best_anchor]
 
             target_prompt = "".join([
                 f"Input: {test_data[idx]['input']} Label: {test_data[idx]['output']}\n" for idx in comb
@@ -693,7 +696,7 @@ class MetaICLData(object):
                 )
 
                 taylor_losses = []
-                for j in range(len(base_loss_tensor[dp_idx])):  # over labels
+                for j in range(len(base_loss_tensor[dp_idx])):
                     correction = torch.sum(grad_tensor[dp_idx][j] * delta_P).item()
                     approx_loss = base_loss_tensor[dp_idx][j].item() + correction
                     taylor_losses.append(approx_loss)
@@ -706,19 +709,18 @@ class MetaICLData(object):
             acc = correct / len(dev_data)
             accuracy_results.append((comb, acc))
 
-        point_scores = {i: [] for i in range(len(test_data))}
-
+        # Step 3: Score each sample by average accuracy of all combinations it is in
+        point_scores = defaultdict(list)
         for comb, acc in accuracy_results:
             for idx in comb:
                 point_scores[idx].append(acc)
 
         avg_scores = []
         for idx, scores in point_scores.items():
-            if scores:
-                avg_scores.append((idx, sum(scores) / len(scores)))
+            avg_scores.append((idx, sum(scores) / len(scores)))
 
         avg_scores.sort(key=lambda x: -x[1])
-        final_indices = [idx for idx, _ in avg_scores[:self.k]]
+        final_indices = [idx for idx, _ in avg_scores[:k]]
         selected_data = [test_data[i] for i in final_indices]
 
         return selected_data, accuracy_results[0][1], total_flops
