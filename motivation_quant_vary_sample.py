@@ -13,7 +13,7 @@ from torch.nn.attention import SDPBackend, sdpa_kernel
 
 
 
-def estimate_loss_second_order(anchor_loss, anchor_gradient, anchor_input, dp_input, option):
+def estimate_loss_first_order(anchor_loss, anchor_gradient, anchor_input, dp_input, option):
     delta_P = dp_input - anchor_input.detach()
     delta_P = delta_P.to(anchor_input.device)
     delta_P.requires_grad = False
@@ -76,8 +76,6 @@ def main(args):
     for i in random_numbers:
         init+="Input: " + test_data[i]["input"]+" Output: "+test_data[i]["output"]+"\n"
 
-    # init+=
-
     anchor_dp = test_data[0]
     query_dp = test_data[1]
     anchor_losses = {}
@@ -112,9 +110,6 @@ def main(args):
         print("last_token_idx: ",last_token_idx)
         print("input_last_token: ", tokenizer.decode(input_ids[0, last_token_idx]))
         print("output: ", tokenizer.decode(torch.argmax(output_logits[0,last_token_idx,:])))
-        # log_probs = F.log_softmax(output_logits[0, last_token_idx, :], dim=-1)
-        # loss = -log_probs[tokens_output]
-        # loss.backward()
         selected_logit = -output_logits[0, last_token_idx, tokens_output.item()]
         gradient = torch.autograd.grad(selected_logit, embedding_input, retain_graph=True, create_graph=False)[0]
         
@@ -185,15 +180,11 @@ def main(args):
                 else: 
                     embedding_dp_option = model.model.embed_tokens(input_ids)
 
-            estimated_loss = estimate_loss_second_order(anchor_loss=anchor_losses[option], anchor_gradient=anchor_gradients[option], anchor_input=anchor_embedding[option], dp_input=embedding_dp_option, option=option)
+            estimated_loss = estimate_loss_first_order(anchor_loss=anchor_losses[option], anchor_gradient=anchor_gradients[option], anchor_input=anchor_embedding[option], dp_input=embedding_dp_option, option=option)
             option_losses.append(estimated_loss)
             delta_P = embedding_dp_option.detach() - anchor_embedding[option].detach()
-            # print("label: ",option)
             distances.append(torch.norm(delta_P).item()/torch.max(torch.norm(embedding_dp_option.detach()), torch.norm(anchor_embedding[option].detach())).item())
-            # print("estimated_loss: ", estimated_loss)
-            # print("inference_loss: ",dp_loss_all[idx][option])
-            # print("distance: ",torch.norm(delta_P).item()/torch.max(torch.norm(embedding_dp_option.detach()), torch.norm(anchor_embedding[option].detach())).item())
-            # print("-------------------------------------")
+
         predicted_option_idx = np.argmin(option_losses)
         predicted_label = dp["options"][predicted_option_idx]
 
@@ -201,7 +192,6 @@ def main(args):
         
         sample_errors = []
         for jdx, label in enumerate(dp["options"]):
-            # print(f"inference_loss[label] : {inference_loss[label]}, option_losses[jdx] : {option_losses[jdx]}")
             error = np.fabs(np.fabs(inference_loss[label]) - np.fabs(option_losses[jdx])) / max(np.fabs(inference_loss[label]), np.fabs(option_losses[jdx]))
             current_error.append(error)
             sample_errors.append(error)

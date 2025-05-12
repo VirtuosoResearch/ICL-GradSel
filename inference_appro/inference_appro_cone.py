@@ -37,6 +37,10 @@ def forward_selection_real(model, tokenizer, test_data, val_data, device, k, mod
     total_flops = 0
     candidate_losses = []
 
+    total_len = len(val_data)
+    dev_data = val_data[:total_len//2]
+    val_data = val_data[total_len//2:]
+
     for i, candidate in enumerate(tqdm(test_data, desc="Evaluating all candidates", leave=False)):
         prompt = prompt_prefix + f"Input: {candidate['input']} Output: {candidate['output']}\n"
         total_loss = 0.0
@@ -63,7 +67,7 @@ def forward_selection_real(model, tokenizer, test_data, val_data, device, k, mod
         prompt_prefix += f"Input: {test_data[idx]['input']} Output: {test_data[idx]['output']}\n"
 
     round_loss = []
-    for val_dp in tqdm(val_data, desc="Recording real loss", leave=False):
+    for val_dp in tqdm(dev_data, desc="Recording real loss", leave=False):
         text = prompt_prefix + f"Input: {val_dp['input']} Output: "
         inputs = tokenizer(text, return_tensors="pt", padding="max_length", truncation=True, max_length=512)
         input_ids = inputs["input_ids"].to(device)
@@ -151,6 +155,11 @@ def forward_selection_approx(model, tokenizer, test_data, val_data, device, k, s
     val_losses = []
     total_flops = 0
 
+    total_len = len(val_data)
+    dev_data = val_data[:total_len//2]
+    val_data = val_data[total_len//2:]
+
+
     candidate_indices = list(range(len(test_data)))
     anchor_idx = random.choice(candidate_indices)
     anchor = test_data[anchor_idx]
@@ -207,7 +216,7 @@ def forward_selection_approx(model, tokenizer, test_data, val_data, device, k, s
         prompt_prefix += f"Input: {test_data[idx]['input']} Output: {test_data[idx]['output']}\n"
 
     round_loss = []
-    for j, val_dp in enumerate(tqdm(val_data, desc="Estimating val loss from selected prompt", leave=False)):
+    for j, val_dp in enumerate(tqdm(dev_data, desc="Estimating val loss from selected prompt", leave=False)):
         text = prompt_prefix + f"Input: {val_dp['input']} Output: "
         inputs = tokenizer(text, return_tensors="pt", padding="max_length", truncation=True, max_length=512)
         input_ids = inputs["input_ids"].to(device)
@@ -263,8 +272,8 @@ def main(args):
 
     test_data = load_jsonl(f"./data/{args.task}/{args.task}_test.jsonl")
     val_data = load_jsonl(f"./data/{args.task}/{args.task}_dev.jsonl")
-    test_data = test_data[:50]
-    val_data = val_data[:15]
+    test_data = test_data[:100]
+    val_data = val_data[:30]
     print("Running real forward selection")
     model_name = args.model
     real_losses, selected_indices, flops1 = forward_selection_real(model, tokenizer, test_data, val_data, device, args.k, model_name)

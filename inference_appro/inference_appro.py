@@ -5,7 +5,10 @@ import json
 import numpy as np
 from tqdm import tqdm
 import argparse
+from thop import profile
 
+
+is_flops = False
 
 def load_jsonl(path):
     with open(path, "r") as f:
@@ -21,6 +24,7 @@ def get_embedding(model, input_ids, model_name):
 def compute_loss(model, input_ids, attention_mask, label_token_id):
     logits = model(input_ids=input_ids, attention_mask=attention_mask).logits
     last_token_idx = attention_mask.sum(dim=1).item() - 2
+
     return -logits[0, last_token_idx, label_token_id]
 
 
@@ -132,6 +136,91 @@ def forward_selection_approx(model, tokenizer, test_data, val_data, device, k, s
     return val_losses
 
 
+def forward_selection_hybrid(model, tokenizer, test_data, val_data, device, k, selected_indices, model_name):
+    selected_indices = []
+    prompt_prefix = ""
+    val_losses = []
+
+    for step in tqdm(range(k), desc="Hybrid Forward Selection"):
+        best_loss, best_idx = float("inf"), -1
+        for i, candidate in enumerate(tqdm(test_data, desc="Evaluating candidates", leave=False)):
+            if i in selected_indices:
+                continue
+            prompt = prompt_prefix + f"Input: {candidate['input']} Output: {candidate['output']}\n"
+            total_loss = 0.0
+            for val_dp in tqdm(val_data, desc="Validating (real)", leave=False):
+                text = prompt + f"Input: {val_dp['input']} Output: "
+                inputs = tokenizer(text, return_tensors="pt", padding="max_length", truncation=True, max_length=512)
+                input_ids = inputs["input_ids"].to(device)
+                attention_mask = inputs["attention_mask"].to(device)
+                label_token_id = tokenizer(val_dp["output"], return_tensors="pt").input_ids[0][1].to(device)
+
+                with torch.no_grad():
+                    loss = compute_loss(model, input_ids, attention_mask, label_token_id)
+                    total_loss += loss.item()
+            avg_loss = total_loss / len(val_data)
+            if avg_loss < best_loss:
+                best_loss = avg_loss
+                best_idx = i
+
+        selected_indices.append(best_idx)
+        prompt_prefix += f"Input: {test_data[best_idx]['input']} Output: {test_data[best_idx]['output']}\n"
+
+        if step == k - 2:
+            break
+
+    anchor_dp = test_data[selected_indices[-1]]
+    anchor_prompt = prompt_prefix + f"Input: {anchor_dp['input']} Output: {anchor_dp['output']}\n"
+    val_dp = val_data[0]
+    text = anchor_prompt + f"Input: {val_dp['input']} Output: "
+    inputs = tokenizer(text, return_tensors="pt", padding="max_length", truncation=True, max_length=512)
+    input_ids = inputs["input_ids"].to(device)
+    attention_mask = inputs["attention_mask"].to(device)
+    label_token_id = tokenizer(val_dp["output"], return_tensors="pt").input_ids[0][1].to(device)
+
+    emb = get_embedding(model, input_ids, model_name).detach()
+    emb.requires_grad = True
+    anchor_loss = compute_loss_embedding(model, emb, attention_mask, label_token_id)
+    anchor_grad = torch.autograd.grad(anchor_loss, emb)[0].detach()
+    anchor_emb = emb.detach()
+
+    best_loss, best_idx = float("inf"), -1
+    for i, candidate in enumerate(tqdm(test_data, desc="Approx final selection", leave=False)):
+        if i in selected_indices:
+            continue
+        prompt = prompt_prefix + f"Input: {candidate['input']} Output: {candidate['output']}\n"
+        total_loss = 0.0
+        for val_dp in tqdm(val_data, desc="Validating (approx)", leave=False):
+            text = prompt + f"Input: {val_dp['input']} Output: "
+            inputs = tokenizer(text, return_tensors="pt", padding="max_length", truncation=True, max_length=512)
+            input_ids = inputs["input_ids"].to(device)
+            dp_emb = get_embedding(model, input_ids, model_name).detach()
+            approx_loss = estimate_loss_first_order(anchor_loss.item(), anchor_grad, anchor_emb, dp_emb)
+            total_loss += approx_loss
+        avg_loss = total_loss / len(val_data)
+        if avg_loss < best_loss:
+            best_loss = avg_loss
+            best_idx = i
+
+    selected_indices.append(best_idx)
+    prompt_prefix += f"Input: {test_data[best_idx]['input']} Output: {test_data[best_idx]['output']}\n"
+
+    round_loss = []
+    for val_dp in tqdm(val_data, desc="Recording hybrid final loss", leave=False):
+        text = prompt_prefix + f"Input: {val_dp['input']} Output: "
+        inputs = tokenizer(text, return_tensors="pt", padding="max_length", truncation=True, max_length=512)
+        input_ids = inputs["input_ids"].to(device)
+        attention_mask = inputs["attention_mask"].to(device)
+        label_token_id = tokenizer(val_dp["output"], return_tensors="pt").input_ids[0][1].to(device)
+
+        with torch.no_grad():
+            loss = compute_loss(model, input_ids, attention_mask, label_token_id)
+        round_loss.append(loss.item())
+
+    val_losses.append(round_loss)
+    return val_losses
+
+
 def compute_mse(real_losses, approx_losses):
     real = np.array(real_losses)
     approx = np.array(approx_losses)
@@ -177,10 +266,11 @@ def main(args):
     real_losses, selected_indices = forward_selection_real(model, tokenizer, test_data, val_data, device, args.k, model_name)
 
     print("Running approximate forward selection")
-    approx_losses = forward_selection_approx(model, tokenizer, test_data, val_data, device, args.k, selected_indices, model_name)
+    approx_losses = forward_selection_hybrid(model, tokenizer, test_data, val_data, device, args.k, selected_indices, model_name)
 
     mse = compute_mse(real_losses, approx_losses)
     print("MSE between real and approximate forward selection losses:", mse)
+    
 
 
 if __name__ == "__main__":
@@ -189,5 +279,6 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--task", type=str, default="sst2")
     parser.add_argument("--k", type=int, default=5)
+    parser.add_argument("--is_flops", )
     args = parser.parse_args()
     main(args)
