@@ -1,0 +1,1 @@
+python test.py --dataset sst2 --gpt2 deepseek-ai/deepseek-llm-7b-chat --method direct --out_dir out/dir --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k 8 --ground --max_length 128
