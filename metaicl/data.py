@@ -255,10 +255,11 @@ class MetaICLData(object):
             return one_trial_losses[idx], total_flops
         return label_id, label, total_flops
 
-    def random_ensemble(self, gpt2, metaicl_model, test_data, dev_data, num_combinations=100, k=8, seed=42):
+    def random_ensemble(self, gpt2, metaicl_model, test_data, dev_data, num_combinations=100, k=8, seed=42, num_anchors=1):
         random.seed(seed)
         device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
 
+        self.logger.info(f"number of anchors: {num_anchors}")
         all_indices = list(range(len(test_data)))
 
         # Efficient sampling
@@ -279,7 +280,7 @@ class MetaICLData(object):
         sampled_combinations = sample_unique_combinations(all_indices, k, num_combinations, seed=seed)
 
         # Step 1: Choose 5 anchor combinations and precompute
-        anchor_combs = random.sample(sampled_combinations, 1)
+        anchor_combs = random.sample(sampled_combinations, num_anchors)
         anchor_info = {}
 
         total_flops = 0
@@ -1363,7 +1364,7 @@ class MetaICLData(object):
                                       token_type_ids=torch.LongTensor(token_type_ids))
         self.metadata = metadata
 
-    def tensorize_estimate(self, gpt2, _test_data, _val_data, is_quant, method="forsel", pseudo_k=3, options=None, add_newlines=True):
+    def tensorize_estimate(self, gpt2, _test_data, _val_data, is_quant, method="forsel", pseudo_k=3, num_anchors=1, options=None, add_newlines=True):
         print("options: ", options)
         if options is not None:
             print("len(_test_data) : ", len(_test_data))
@@ -1424,7 +1425,7 @@ class MetaICLData(object):
         if method=="forsel":
             ground, _, flops = self.greedy_select_subset5(gpt2=gpt2, metaicl_model=metaicl_model, test_data=test_data, dev_data=psudo_data)
         elif method=='ranens':
-            ground, _, flops = self.random_ensemble(gpt2=gpt2, k=self.k, metaicl_model=metaicl_model, test_data=test_data, dev_data=psudo_data)
+            ground, _, flops = self.random_ensemble(gpt2=gpt2, k=self.k, metaicl_model=metaicl_model, test_data=test_data, dev_data=psudo_data, num_anchors=num_anchors)
         else:
             ground, _, flops = self.greedy_select_subset_cone
         demonstrations = []
