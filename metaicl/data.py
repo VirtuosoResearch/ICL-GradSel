@@ -1407,18 +1407,18 @@ class MetaICLData(object):
         correct = 0     
         if pseudo_k<=10:   
             for idx,dp in tqdm(enumerate(unlabeled_data), total=len(unlabeled_data), leave=True, position=0):
-                # samples, top_indices, _ = self._select_top_k_neighbors(val_features[idx], test_features, test_data, k=pseudo_k,dp_idx=-1)
-                # demonstration=[]
+                samples, top_indices, _ = self._select_top_k_neighbors(val_features[idx], test_features, test_data, k=10,dp_idx=-1)
+                demonstration=[]
 
-                # zt_output = dp["output"]
+                zt_output = dp["output"]
 
-                # for dk in samples:
-                #     demonstration+=self.tokenizer("Input: " + dk["input"] + " " + "Label: "+dk["output"])["input_ids"]
-                # _, dp["output"], flops= self.forward(gpt2, metaicl_model, demonstration, dp, dp["task"])
-                # #if self.is_flops: self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
-                # #total_flops+=flops
+                for dk in samples:
+                    demonstration+=self.tokenizer("Input: " + dk["input"] + " " + "Label: "+dk["output"])["input_ids"]
+                _, dp["output"], flops= self.forward(gpt2, metaicl_model, demonstration, dp, dp["task"])
+                #if self.is_flops: self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
+                #total_flops+=flops
 
-                # correct +=(zt_output==dp["output"])
+                correct +=(zt_output==dp["output"])
 
                 psudo_data.append(dp)
             self.logger.info(f"ZT_Accuracy = {float(correct/(len(unlabeled_data)))}")
