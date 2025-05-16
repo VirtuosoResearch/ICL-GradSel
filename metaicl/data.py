@@ -49,6 +49,33 @@ from sklearn.linear_model import LinearRegression
 
 from utils.data import load_data
 from metaicl.model import MetaICLModel
+from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
+
+
+class OpenLLMEvaluator:
+    def __init__(self, model_name="deepseek-ai/deepseek-llm-7b-chat"):
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_name, torch_dtype=torch.bfloat16, device_map="auto"
+        )
+        self.model.generation_config = GenerationConfig.from_pretrained(model_name)
+        self.model.generation_config.pad_token_id = self.model.generation_config.eos_token_id
+
+    def query(self, question: str, examples: list = []) -> str:
+        messages = []
+        for inp, out in examples:
+            messages.append({"role": "user", "content": inp})
+            messages.append({"role": "assistant", "content": out})
+        messages.append({"role": "user", "content": question})
+
+        input_tensor = self.tokenizer.apply_chat_template(
+            messages, add_generation_prompt=True, return_tensors="pt"
+        ).to(self.model.device)
+
+        outputs = self.model.generate(input_tensor, max_new_tokens=100)
+        result = self.tokenizer.decode(outputs[0][input_tensor.shape[1]:], skip_special_tokens=True)
+        return result.strip()
+
 
 from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
 
@@ -1914,6 +1941,74 @@ class MetaICLData(object):
         candidates = [item for item in data if item['task']!=task]
         output = random.sample(candidates, m)
         return output
+
+    def tensorize_bm25(self, _test_data, _val_data, options=None, add_newlines=True):
+        if options is not None:
+            for i, dp in enumerate(_test_data):
+                _test_data[i] = {"input": dp, "options": options}
+            for i, dp in enumerate(_val_data):
+                _val_data[i] = {"input": dp, "options": options}
+
+        val_data, test_data = [], []
+        for dp in _test_data:
+            if "output" not in dp:
+                dp["output"] = dp["options"][0]
+            test_data.append(dp.copy())
+        for dp in _val_data:
+            if "output" not in dp:
+                dp["output"] = dp["options"][0]
+            val_data.append(dp.copy())
+
+        task = _test_data[0]["task"]
+        input_ids, attention_mask, token_type_ids = [], [], []
+        metadata = []
+
+        test_inputs = [dp["input"].split() for dp in test_data]
+        bm25 = BM25Okapi(test_inputs)
+
+        instructions = f"Here are {len(test_data[0]['options'])} options: "
+        for option in test_data[0]["options"]:
+            instructions += option + ", "
+        instructions += f"You should choose one of them to answer at the end. \nHere are {self.k} samples for your reference. \n"
+        init_tokens = self.tokenizer(instructions)["input_ids"][1:]
+
+        for dp_idx, dp in enumerate(val_data):
+            inputs, outputs, answer = self._prepro_each_datapoint(
+                dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
+
+            if self.use_demonstrations:
+                query_terms = dp["input"].split()
+                scores = bm25.get_scores(query_terms)
+                scores[dp_idx] = -1e9
+
+                topk_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:self.k]
+                top_k_neighbors = [test_data[i] for i in topk_indices]
+
+                demonstrations = init_tokens
+                for i, neighbor_dp in enumerate(top_k_neighbors):
+                    input_, output_ = self._prepro_each_datapoint(
+                        neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
+                    demonstrations += input_[1:] + output_[1:]
+
+            indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
+
+            metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
+            for inputs_, outputs_ in zip(inputs, outputs):
+                if self.use_demonstrations:
+                    inputs_ = demonstrations + inputs_[1:]
+                encoded = prepro_sentence_pair_single(
+                    inputs_, [outputs_[2]], self.max_length, self.tokenizer,
+                    self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
+                    allow_truncation=self.use_demonstrations)
+                input_ids.append(encoded[0])
+                attention_mask.append(encoded[1])
+                token_type_ids.append(encoded[2])
+
+        self.tensorized_inputs = dict(
+            input_ids=torch.LongTensor(input_ids),
+            attention_mask=torch.LongTensor(attention_mask),
+            token_type_ids=torch.LongTensor(token_type_ids))
+        self.metadata = metadata
 
     def tensorize(self, _train_data, _test_data, options=None,
                   add_newlines=True):
