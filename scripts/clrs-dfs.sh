@@ -1,0 +1,6 @@
+python test.py --dataset clrs_dfs --gpt2 deepseek-ai/deepseek-llm-7b-chat --method direct --out_dir out/dir --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k 3 --ground --max_length 350
+python test.py --dataset clrs_dfs --gpt2 deepseek-ai/deepseek-llm-7b-chat --method direct --out_dir out/dir --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k 6 --ground --max_length 350
+python test.py --dataset clrs_dfs --gpt2 deepseek-ai/deepseek-llm-7b-chat --method direct --out_dir out/dir --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k 8 --ground --max_length 350
+python test.py --dataset clrs_dfs --gpt2 deepseek-ai/deepseek-llm-7b-chat --method direct --out_dir out/dir --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k 4 --ground --max_length 350
+python test.py --dataset clrs_dfs --gpt2 deepseek-ai/deepseek-llm-7b-chat --method direct --out_dir out/dir --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k 5 --ground --max_length 350
+python test.py --dataset clrs_dfs --gpt2 deepseek-ai/deepseek-llm-7b-chat --method direct --out_dir out/dir --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k 7 --ground --max_length 350

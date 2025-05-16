@@ -11,6 +11,9 @@ python test.py --dataset superglue-cb --gpt2 gpt2-large --method direct --out_di
 
 python test.py --dataset superglue-cb --gpt2 gpt2-large --method direct --out_dir out/gpt2-large --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 100 --k 6 --topk
 
+
+python test.py --method direct --out_dir out/gpt2-large --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 100 --k 3 --gpt2 meta-llama/Llama-3.1-8B --dataset poem_sentiment --estim
+
 # python test.py --dataset superglue-cb --gpt2 gpt2-large --method direct --out_dir out/gpt2-large --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 100 --k 1 --randomk
 
 # python test.py --dataset superglue-cb --gpt2 gpt2-large --method direct --out_dir out/gpt2-large --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 100 --k 2 --randomk

@@ -1,0 +1,5 @@
+python test.py --dataset graphqa --gpt2 deepseek-ai/deepseek-llm-7b-chat --method direct --out_dir out/dir --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k 3 --forsel --max_length 400
+python test.py --dataset graphqa --gpt2 deepseek-ai/deepseek-llm-7b-chat --method direct --out_dir out/dir --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k 4 --forsel --max_length 400
+python test.py --dataset graphqa --gpt2 deepseek-ai/deepseek-llm-7b-chat --method direct --out_dir out/dir --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k 5 --forsel --max_length 400
+python test.py --dataset graphqa --gpt2 deepseek-ai/deepseek-llm-7b-chat --method direct --out_dir out/dir --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k 6 --forsel --max_length 400
+python test.py --dataset graphqa --gpt2 deepseek-ai/deepseek-llm-7b-chat --method direct --out_dir out/dir --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k 7 --forsel --max_length 400
