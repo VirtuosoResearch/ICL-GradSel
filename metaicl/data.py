@@ -434,7 +434,7 @@ class MetaICLData(object):
                 if self.use_demonstrations:
                     inputs_ = demonstrations + inputs_[1:]
                 encoded = prepro_sentence_pair_single(
-                    inputs_, [outputs_[2]], self.max_length, self.tokenizer,
+                    inputs_, outputs_, self.max_length, self.tokenizer,
                     self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
                     allow_truncation=self.use_demonstrations)
                 input_ids.append(encoded[0])
@@ -1341,18 +1341,19 @@ class MetaICLData(object):
         correct = 0     
         if pseudo_k<=10:   
             for idx,dp in tqdm(enumerate(unlabeled_data), total=len(unlabeled_data), leave=True, position=0):
-                samples, top_indices, _ = self._select_top_k_neighbors(val_features[idx], test_features, test_data, k=10,dp_idx=-1)
-                demonstration=[]
+                #samples, top_indices, _ = self._select_top_k_neighbors(val_features[idx], test_features, test_data, k=10,dp_idx=-1)
+                # samples = self._select_random_k_neighbors(val_features[idx], test_features, test_data, k=50,dp_idx=-1)
+                # demonstration=[]
 
-                zt_output = dp["output"]
+                # zt_output = dp["output"]
 
-                for dk in samples:
-                    demonstration+=self.tokenizer("Input: " + dk["input"] + " " + "Label: "+dk["output"])["input_ids"]
-                _, dp["output"], flops= self.forward(gpt2, metaicl_model, demonstration, dp, dp["task"])
-                #if self.is_flops: self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
-                #total_flops+=flops
+                # for dk in samples:
+                #     demonstration+=self.tokenizer("Input: " + dk["input"] + " " + "Label: "+dk["output"] + "\n")["input_ids"]
+                # _, dp["output"], flops= self.forward(gpt2, metaicl_model, demonstration, dp, dp["task"])
+                # #if self.is_flops: self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
+                # #total_flops+=flops
 
-                correct +=(zt_output==dp["output"])
+                # correct +=(zt_output==dp["output"])
 
                 psudo_data.append(dp)
             self.logger.info(f"ZT_Accuracy = {float(correct/(len(unlabeled_data)))}")
@@ -1364,9 +1365,12 @@ class MetaICLData(object):
 
         total_flops+= flops
 
+        demonstrations = []
         for i, neighbor_dp in enumerate(ground):
-            demonstrations+=self.tokenizer(neighbor_dp["input"] + " " +neighbor_dp["output"] + "\n")["input_ids"]
-
+            input_, output_ = self._prepro_each_datapoint(
+                neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
+            demonstrations += input_ + output_
+        
         cnt=0
         
         # for dp in tqdm(val_data):
@@ -1378,11 +1382,11 @@ class MetaICLData(object):
         # self.logger.info(f"Accuracy : {cnt/len(val_data)}")
         # self.logger.info(f"Total_FLOPS: {total_flops / 1e9:.2f} GFLOPs")
 
-        demonstrations = []
-        for i, neighbor_dp in enumerate(ground):
-            input_, output_ = self._prepro_each_datapoint(
-                neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
-            demonstrations += input_[1:] + output_[1:]
+        # demonstrations = []
+        # for i, neighbor_dp in enumerate(ground):
+        #     input_, output_ = self._prepro_each_datapoint(
+        #         neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
+        #     demonstrations += input_[1:] + output_[1:]
 
         for dp_idx, dp in enumerate(val_data):
             inputs, outputs, answer = self._prepro_each_datapoint(
@@ -1479,7 +1483,7 @@ class MetaICLData(object):
         input_tokens = self.tokenizer(dp["input"])["input_ids"]
 
         if is_training or for_demonstrations:
-            output_tokens = self.tokenizer(dp["output"])["input_ids"]
+            output_tokens = self.tokenizer(dp["output"] + "\n")["input_ids"]
             if "task" in dp:
                 if (dp["task"].startswith("inst:piqa") or dp["task"].startswith("inst:yahoo_answers_topics")) and \
                         len(input_tokens)+len(output_tokens)+2>self.max_length_per_example:
@@ -1696,7 +1700,9 @@ class MetaICLData(object):
 
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
-
+        top_k_neighbors = self._select_random_k_neighbors(
+            val_features[0], test_features, test_data, self.k, 0
+        )
         for dp_idx, dp in enumerate(val_data):
             inputs, outputs, answer = self._prepro_each_datapoint(
                 dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
@@ -1705,9 +1711,9 @@ class MetaICLData(object):
             if self.use_demonstrations and self.k>0:
                 dp_feature = val_features[dp_idx]            
 
-                top_k_neighbors = self._select_random_k_neighbors(
-                    dp_feature, test_features, test_data, self.k, dp_idx
-                )
+                # top_k_neighbors = self._select_random_k_neighbors(
+                #     dp_feature, test_features, test_data, self.k, dp_idx
+                # )
 
                 demonstrations = []
                 for i, neighbor_dp in enumerate(top_k_neighbors):
@@ -1729,6 +1735,7 @@ class MetaICLData(object):
                 input_ids.append(encoded[0])
                 attention_mask.append(encoded[1])
                 token_type_ids.append(encoded[2])
+
 
         self.tensorized_inputs = dict(input_ids=torch.LongTensor(input_ids),
                                       attention_mask=torch.LongTensor(attention_mask),
@@ -1773,7 +1780,7 @@ class MetaICLData(object):
         instructions += f"You should choose one of them to answer at the end. \nHere are {self.k} samples for your reference. \n"
         init_tokens = self.tokenizer(instructions)["input_ids"][1:]
 
-        for dp_idx, dp in enumerate(val_data):
+        for dp_idx, dp in enumerate(test_data):
             inputs, outputs, answer = self._prepro_each_datapoint(
                 dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
 
@@ -1798,7 +1805,7 @@ class MetaICLData(object):
                 if self.use_demonstrations:
                     inputs_ = demonstrations + inputs_[1:]
                 encoded = prepro_sentence_pair_single(
-                    inputs_, [outputs_[2]], self.max_length, self.tokenizer,
+                    inputs_, outputs_, self.max_length, self.tokenizer,
                     self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
                     allow_truncation=self.use_demonstrations)
                 input_ids.append(encoded[0])
@@ -1853,9 +1860,6 @@ class MetaICLData(object):
             indices = [[i] for i in range(len(input_ids), len(input_ids)+len(inputs))]
 
             metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
-
-            print("inputs: ",inputs)
-            print("outputs: ",outputs)
 
             for inputs_, outputs_ in zip(inputs, outputs):
                 print("inputs_ : ",inputs_)
