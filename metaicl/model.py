@@ -117,11 +117,12 @@ class MetaICLModel(object):
             model = AutoModelForCausalLM.from_pretrained(gpt2)
         elif "gpt-j" in gpt2:
             model = AutoModelForCausalLM.from_pretrained("EleutherAI/gpt-j-6b") #/gpt2)
-        elif "Llama" in gpt2 or "opt" in gpt2 or "deepseek" in gpt2:
+        elif "Llama" in gpt2 or "opt" in gpt2 or "deepseek" in gpt2 or "Qwen" in gpt2:
             model = AutoModelForCausalLM.from_pretrained(gpt2)
         else:
             raise NotImplementedError(checkpoint)
         self.model_name = gpt2
+        model.config.use_flash_attention = False
 
         self.model = model
         if is_quant != True:
@@ -171,6 +172,7 @@ class MetaICLModel(object):
             curr_label_losses = [np.sum(losses[indices]) for indices in dp["indices"]]
             prediction_idx = sorted(enumerate(curr_label_losses), key=lambda x: x[1])[0][0]
             prediction = dp["options"][prediction_idx]
+            print(prediction)
             predictions.append(prediction.strip())
         return predictions
 
