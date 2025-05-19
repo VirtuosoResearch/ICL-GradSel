@@ -31,7 +31,7 @@ def main(logger, args):
 
     if args.gpt2.startswith("gpt2"):
         tokenizer = GPT2Tokenizer.from_pretrained(args.gpt2)
-    elif "Llama" or "deepseek" in args.gpt2:
+    elif "Llama" or "deepseek" or "Qwen" in args.gpt2:
         tokenizer = AutoTokenizer.from_pretrained(args.gpt2)
     else:
         tokenizer = AutoTokenizer.from_pretrained("gpt2")
@@ -39,7 +39,7 @@ def main(logger, args):
     if tokenizer.padding_side=="left":
         tokenizer.padding_side = "right"
     add_newlines = True
-    if "Llama" in args.gpt2:
+    if "Llama" or "Qwen" in args.gpt2:
         special_tokens = {
             "pad_token": "<pad>",
             "unk_token": "<unk>",
@@ -219,7 +219,7 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
     predictions = metaicl_model.do_predict(metaicl_data, losses=losses)
     groundtruths = [dp["output"] for dp in val_data]
     perf = metaicl_data.evaluate(predictions, groundtruths, is_classification)
-    print("Accuracy=", perf)
+    logger.info("Accuracy= %s", perf)
 
     with open(prediction_path, "w") as f:
         for prediction in predictions:
