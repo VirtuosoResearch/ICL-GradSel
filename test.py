@@ -31,7 +31,7 @@ def main(logger, args):
 
     if args.gpt2.startswith("gpt2"):
         tokenizer = GPT2Tokenizer.from_pretrained(args.gpt2)
-    elif "Llama" or "deepseek" in args.gpt2:
+    elif "Llama" or "deepseek" or "Qwen" in args.gpt2:
         tokenizer = AutoTokenizer.from_pretrained(args.gpt2)
     else:
         tokenizer = AutoTokenizer.from_pretrained("gpt2")
@@ -39,7 +39,7 @@ def main(logger, args):
     if tokenizer.padding_side=="left":
         tokenizer.padding_side = "right"
     add_newlines = True
-    if "Llama" in args.gpt2:
+    if "Llama" or "Qwen" in args.gpt2:
         special_tokens = {
             "pad_token": "<pad>",
             "unk_token": "<unk>",
@@ -160,6 +160,9 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
                                       "-m={}".format(args.m) if args.supcon or args.ranens or args.forsel or args.unlabeled or args.ground else ""))
 
     datapath = "./data/alldata.jsonl"
+    train_split = 0.4
+    train_data = val_data[int(len(val_data)*train_split):]
+    val_data = val_data[:int(len(val_data)*train_split)]
     if args.topk:
         metaicl_data.tensorize_topk(test_data, val_data, options=None, add_newlines=add_newlines)
     elif args.randomk:
@@ -176,6 +179,8 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
         metaicl_data.tensorize_estimate(args.gpt2, test_data, val_data, args.is_quant,pseudo_k=args.pseudo_k, method="forsel", true_step=args.true_step, options=None,  add_newlines=add_newlines)
     elif args.ranens:
         metaicl_data.tensorize_estimate(args.gpt2, test_data, val_data, args.is_quant,pseudo_k=args.pseudo_k, method="ranens", num_anchors=args.num_anchors, options=None,  add_newlines=add_newlines)
+    elif args.bridge:
+        metaicl_data.tensorize_bridge(args.gpt2, test_data, val_data, train_data, args.is_quant,pseudo_k=args.pseudo_k, method="ranens", num_anchors=args.num_anchors, options=None,  add_newlines=add_newlines, sub_sample=False, use_proj=True, proj_dim=256)
 
     metaicl_data.print_tensorized_example()
     logger.info(cache_path)
@@ -220,7 +225,7 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
     predictions = metaicl_model.do_predict(metaicl_data, losses=losses)
     groundtruths = [dp["output"] for dp in val_data]
     perf = metaicl_data.evaluate(predictions, groundtruths, is_classification)
-    print("Accuracy=", perf)
+    logger.info("Accuracy= %s", perf)
 
     with open(prediction_path, "w") as f:
         for prediction in predictions:
@@ -268,6 +273,8 @@ if __name__=='__main__':
     parser.add_argument("--bm25", default=False, action="store_true")
     parser.add_argument("--uncertain", default=False, action="store_true")
     parser.add_argument("--groundestim", default=False, action="store_true")
+    parser.add_argument("--bridge", default=False, action="store_true")
+    
     parser.add_argument("--m", type=int, default=4)
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--is_quant", default=False, action="store_true")
