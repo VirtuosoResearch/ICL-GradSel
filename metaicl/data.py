@@ -1817,6 +1817,195 @@ class MetaICLData(object):
             attention_mask=torch.LongTensor(attention_mask),
             token_type_ids=torch.LongTensor(token_type_ids))
         self.metadata = metadata
+    
+    def score_by_subset(self, gpt2, metaicl_model, test_data, dev_data, subset_indices):
+        print(f"Subset indices: {subset_indices}")
+        integer_indices = subset_indices.nonzero(as_tuple=True)[0]
+        demonstrations = [test_data[i] for i in integer_indices]
+        acc = self.evaluate_accuracy(gpt2, metaicl_model, demonstrations, dev_data, test_data[0]["task"])
+        
+        return acc, demonstrations
+
+    def bayesian_optimization_for_subsets(self, gpt2, metaicl_model, test_data, val_data, options=None, add_newlines=True, n_examples=20, n_init=10, n_eval=20):
+        """
+        Uses Bayesian Optimization to find the best subset of examples.
+        """
+        # Define the search space: a discrete space of {0, 1}^m
+        # where m is the total number of available examples.
+        search_space_bounds = torch.stack([
+            torch.zeros(n_examples, dtype=torch.float64), 
+            torch.ones(n_examples, dtype=torch.float64)
+        ])
+
+        # train_X stores the evaluated subsets (binary vectors)
+        train_X = torch.empty(n_init, n_examples, dtype=torch.float64)
+        # perf_Y stores the raw performance g(e) from the black-box function
+        perf_Y = torch.empty(n_init, 1, dtype=torch.float64)
+        
+        # Store all evaluated points to find the best one at the end
+        evaluated_subsets = {}
+
+        for i in range(n_init):
+            # Generate a random non-empty subset
+            random_subset = torch.randint(0, 2, (n_examples,), dtype=torch.float64)
+            if random_subset.sum() == 0:
+                random_subset[torch.randint(0, n_examples, (1,))] = 1.0
+
+            train_X[i] = random_subset
+            accuracy, _ = self.score_by_subset(gpt2, metaicl_model, test_data, val_data, random_subset)
+            perf_Y[i, 0] = accuracy
+            evaluated_subsets[tuple(random_subset.tolist())] = accuracy
+
+        # ----- BO Iteration Loop (Algorithm 2, Steps 5-9) -----
+        for t in range(n_init, n_eval):
+            print(f"\n--- BO Iteration {t+1}/{n_eval} ---")
+            
+            # ----- Objective Scalarization (Algorithm 2, Step 6 & 7) -----
+            # This is the core idea from the paper: use random scalarization to handle
+            # the bi-objective problem (performance vs. sparsity).
+            # The scalarized objective is h_t(e) using Tchebyshev scalarization.
+            beta_t = torch.rand(1).item() * 0.75 + 0.25  # beta_t is in [0.25, 1] as per the paper
+            g_max = perf_Y.max()
+            
+            cardinality_term = (1 - beta_t) * train_X.sum(dim=-1)
+            perf_term = beta_t * (perf_Y.squeeze(-1) - g_max)
+            
+            # Combine into a single objective to be modeled by the GP
+            train_Y_scalarized = torch.max(perf_term, -cardinality_term).unsqueeze(-1)
+            
+            # ----- Fit GPR Surrogate Model -----
+            gp = SingleTaskGP(train_X, train_Y_scalarized)
+            mll = ExactMarginalLogLikelihood(gp.likelihood, gp)
+            # CHANGED: Use the new MLL fitting function
+            fit_gpytorch_mll(mll)
+            
+            # ----- Define and Optimize Acquisition Function -----
+            # The paper uses Expected Improvement (EI).
+            # 'best_f' is the best *scalarized* objective value found so far.
+            ei_acqf = LogExpectedImprovement(model=gp, best_f=train_Y_scalarized.max())
+            
+            # Optimize the acquisition function over the discrete search space
+            # to get the next candidate point to evaluate.
+            candidate, _ = optimize_acqf(
+                acq_function=ei_acqf,
+                bounds=search_space_bounds,
+                q=1,               # Recommend one candidate at a time
+                num_restarts=10,   # Internal optimization setting for BoTorch
+                raw_samples=512,   # Internal optimization setting for BoTorch
+                options={"binary": True} # Critical for discrete/binary spaces
+            )
+            
+            # ----- Evaluate the new candidate and update data -----
+            new_x = candidate.squeeze(0).round() # Ensure it's a binary vector
+            accuracy, _ = self.score_by_subset(gpt2, metaicl_model, test_data, val_data, new_x)
+            
+            # Append new data to the training set for the next iteration
+            train_X = torch.cat([train_X, new_x.unsqueeze(0)])
+            perf_Y = torch.cat([perf_Y, torch.tensor([[accuracy]], dtype=torch.float64)])
+            evaluated_subsets[tuple(new_x.tolist())] = accuracy
+
+        # ----- Return Best Found Solution (Algorithm 2, Step 10) -----
+        # At the end, search through all *actually evaluated* points and return
+        # the one with the highest raw performance g(e), not the scalarized one.
+        print("\nOptimization finished. Finding the best subset...")
+        best_subset_tuple = max(evaluated_subsets, key=evaluated_subsets.get)
+        best_accuracy = evaluated_subsets[best_subset_tuple]
+        best_subset_tensor = torch.tensor(best_subset_tuple, dtype=torch.float64)
+        
+        print(f"Found best subset (size: {int(best_subset_tensor.sum())}) with accuracy: {best_accuracy:.4f}")
+        
+        return best_subset_tensor
+
+    def tensorize_bridge(self, gpt2, _test_data, _val_data, _train_data, is_quant, method="forsel", pseudo_k=3, num_anchors=1, true_step=0, options=None, add_newlines=True, sub_sample=False, use_proj=False, proj_dim=512):
+        print(gpt2)
+        print("options: ", options)
+        if options is not None:
+            print("len(_test_data) : ", len(_test_data))
+            print(_test_data[0])
+            for i, dp in enumerate(_test_data):
+                _test_data[i] = {"input": dp, "options": options}
+            for i, dp in enumerate(_val_data):
+                _val_data[i] = {"input": dp, "options": options}
+            for i, dp in enumerate(_train_data):
+                _train_data[i] = {"input": dp, "options": options}
+        print("len(_test_data) : ",len(_test_data)," ; len(_val_data) : ", len(_val_data), " ; len(_train_data) : ", len(_train_data))
+
+        val_data, unlabeled_data, psudo_data, test_data = [], [], [], []
+        train_data = []
+
+        for dp in _test_data:
+            if "output" not in dp: dp["output"] = dp["options"][0]
+            test_data.append(dp.copy())
+        for dp in _val_data:
+            if "output" not in dp: dp["output"] = dp["options"][0]
+            val_data.append(dp.copy())
+            unlabeled_data.append(dp.copy())
+        for dp in _train_data:
+            if "output" not in dp: dp["output"] = dp["options"][0]
+            train_data.append(dp.copy())
+        task = _test_data[0]["task"]
+        with open(f"./features/{task}_test_features.json", "r") as file: test_features = json.load(file)
+        with open(f"./features/{task}_val_features.json", "r") as file: val_features = json.load(file)
+
+        
+        total_flops = 0
+
+        add_newlines = True
+        checkpoint = None
+        metaicl_model = MetaICLModel(logger=self.logger, out_dir= "./cache", device_num=self.device)
+        print(f"-------------- gpt2: {gpt2} ------------")
+        metaicl_model.load(gpt2=gpt2,is_quant=is_quant)
+
+        print("gpt2 : ",gpt2)
+        print("origin type(metaicl_model) : ",type(metaicl_model.model))
+        if "Llama" in gpt2:
+           metaicl_model.resize(self.tokenizer)
+        embedding_dim = metaicl_model.model.model.embed_tokens.weight.shape[1]
+        if use_proj:
+            self.proj_dim = proj_dim
+            self.proj = torch.randn(embedding_dim, self.proj_dim).to(self.device)
+
+        input_ids, attention_mask, token_type_ids = [], [], []
+        metadata = []
+
+        bridge_subset = self.bayesian_optimization_for_subsets(
+            gpt2=gpt2, metaicl_model=metaicl_model,
+            test_data=test_data, val_data=train_data, options=options, add_newlines=add_newlines,
+            n_examples=20, n_init=16, n_eval=32
+        )
+        print(f"Selected bridge subset: {bridge_subset}")
+        bridge_candidates = [test_data[i] for i in bridge_subset.nonzero(as_tuple=True)[0]]
+        
+        demonstrations = []
+        for i, neighbor_dp in enumerate(bridge_candidates):
+            input_, output_ = self._prepro_each_datapoint(
+                neighbor_dp, is_first=i == 0, for_demonstrations=True, add_newlines=add_newlines)
+            demonstrations += input_ + output_
+
+        for dp_idx, dp in enumerate(val_data):
+            inputs, outputs, answer = self._prepro_each_datapoint(
+                dp, is_first=not self.use_demonstrations, add_newlines=add_newlines)
+                
+
+            indices = [[i] for i in range(len(input_ids), len(input_ids) + len(inputs))]
+
+            metadata.append({"indices": indices, "answer": answer, "options": dp["options"]})
+
+            for inputs_, outputs_ in zip(inputs, outputs):
+                if self.use_demonstrations:
+                    inputs_ = demonstrations + inputs_[1:]
+                encoded = prepro_sentence_pair_single(
+                    inputs_, outputs_, self.max_length,  self.tokenizer, self.tokenizer.bos_token_id, self.tokenizer.eos_token_id,
+                    allow_truncation=self.use_demonstrations
+                )
+                input_ids.append(encoded[0])
+                attention_mask.append(encoded[1])
+                token_type_ids.append(encoded[2])
+
+        self.tensorized_inputs = dict(input_ids=torch.LongTensor(input_ids),
+                                      attention_mask=torch.LongTensor(attention_mask),
+                                      token_type_ids=torch.LongTensor(token_type_ids))
+        self.metadata = metadata
 
     def tensorize(self, _train_data, _test_data, options=None,
                   add_newlines=True):
