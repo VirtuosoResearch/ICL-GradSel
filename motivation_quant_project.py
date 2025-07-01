@@ -14,10 +14,9 @@ def jl_project(vec, target_dim=400):
     assert vec.ndim == 3
     original_dim = vec.shape[-1]
     dtype = vec.dtype 
-    R = torch.randn(original_dim, target_dim, device=vec.device, dtype=dtype) / np.sqrt(target_dim)
-    R = R.to(dtype)
+    R = torch.randn(original_dim, target_dim, device=vec.device, dtype=torch.float32) / np.sqrt(target_dim)
+    # R = R.to(dtype)
     return R
-    # return torch.matmul(vec, R)  # [batch_size, seq_len, target_dim]
 
 
 def estimate_loss_first_order(anchor_loss, anchor_gradient, anchor_input, dp_input, option, jl_dim=None):
@@ -26,15 +25,16 @@ def estimate_loss_first_order(anchor_loss, anchor_gradient, anchor_input, dp_inp
 
     if jl_dim is not None:
         R = jl_project(delta_P, jl_dim)
-        delta_P = torch.matmul(delta_P, R)
-        anchor_gradient = torch.matmul(anchor_gradient, R)
-        # delta_P = jl_project(delta_P, jl_dim)
-        # anchor_gradient = jl_project(anchor_gradient, jl_dim)
+        R_inv = torch.linalg.pinv(R)  # shape: [jl_dim, hidden_dim]
+        g_proj = torch.matmul(anchor_gradient.to(torch.float32), R)     # [1, seq_len, jl_dim]
+        d_proj = torch.matmul(delta_P.to(torch.float32), R_inv.T)
+    else:
+        g_proj = anchor_gradient
+        d_proj = delta_P
 
-    taylor_1st = torch.dot(anchor_gradient.view(-1), delta_P.view(-1))
+    taylor_1st = torch.dot(g_proj.view(-1), d_proj.view(-1))
     estimated_loss = anchor_loss + taylor_1st.item()
 
-    del delta_P, taylor_1st
     torch.cuda.empty_cache()
     return estimated_loss
 
@@ -100,17 +100,12 @@ def main(args):
         input_ids = input_tokens["input_ids"].to(device)
         attention_mask = input_tokens["attention_mask"].to(device)
         tokens_output = tokenizer(option, return_tensors="pt").input_ids[0][1].to(device)
-        # print("input_tokens.keys(): ",input_tokens.keys())
-        # print("input_token: ",tokenizer.decode(input_ids[0]))
-        # print("output_token: ", tokens_output)
-        # print("output_text: ",tokenizer.decode(tokens_output))
 
         with torch.no_grad():
             if "gpt2" in model_name: embedding_input = model.transformer.wte(input_ids)
             elif "opt" in model_name: embedding_input = model.model.decoder.embed_tokens(input_ids)
             else: embedding_input = model.model.embed_tokens(input_ids)
         
-        # anchor_embedding_input = embedding_input.clone().detach()
         embedding_input.requires_grad = True
 
         print(f"embedding_input shape: {embedding_input.shape}")
@@ -118,21 +113,12 @@ def main(args):
         embedding_input = embedding_input.to(model.dtype)  
         output_logits = model(inputs_embeds=embedding_input, attention_mask=attention_mask).logits
         last_token_idx = attention_mask.sum(dim=1).item()-1
-        # print("last_token_idx: ",last_token_idx)
-        # print("input_last_token: ", tokenizer.decode(input_ids[0, last_token_idx]))
-        # print("output: ", tokenizer.decode(torch.argmax(output_logits[0,last_token_idx,:])))
-        # log_probs = F.log_softmax(output_logits[0, last_token_idx, :], dim=-1)
-        # loss = -log_probs[tokens_output]
-        # loss.backward()
         selected_logit = -output_logits[0, last_token_idx, tokens_output.item()]
         gradient = torch.autograd.grad(selected_logit, embedding_input, retain_graph=True, create_graph=True)[0]
         
         anchor_embedding[option] = embedding_input
         anchor_losses[option] = selected_logit.item()
         anchor_gradients[option] = gradient
-        # anchor_embedding[option] = embedding_input
-        # anchor_losses[option] = loss.item()
-        # anchor_gradients[option] = embedding_input.grad.clone().detach()
 
     dp_label = []
     dp_loss_all = []
