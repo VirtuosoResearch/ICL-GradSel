@@ -1,6 +1,4 @@
-## Exploring a contrastive approach to instruction tuning
-
-Project document: https://docs.google.com/document/d/16zgvFrDF_G8YhasyIG2ejB6D1s6lU5NLMQ8ZuCzswWo/edit?usp=sharing
+## Linear-Time Demonstration Selection for In-Context Learning via Gradient Estimation
 
 Here are the procedure to implement our work:
 
