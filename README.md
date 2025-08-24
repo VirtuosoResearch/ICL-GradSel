@@ -1,5 +1,6 @@
 ## Linear-Time Demonstration Selection for In-Context Learning via Gradient Estimation
 
+
 Here are the procedure to implement our work:
 
 1. Enviroment reconstruction
@@ -22,5 +23,5 @@ python get_feature.py --task {task}
 3. Commands to run inferences (Use gpt2-large as an example).
 ```bash
 # GrapsICL
-python test.py --dataset {dataset} --gpt2 gpt2-large --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 100 --k {number} --estim
+python test.py --dataset {dataset} --gpt2 meta-llama/Llama-3.2-3B-Instruct --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 100 --k {number} --estim
 ```
