@@ -158,8 +158,6 @@ class MetaICLData(object):
         self.total_flops=0
 
 
-        #print(tokenizer)
-
         if self.tokenizer is None:
             from transformers import AutoTokenizer
             self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
@@ -608,10 +606,8 @@ class MetaICLData(object):
         topk_indices = sorted(range(len(candidate_data)), key=lambda i: approx_loss_list[i])[:self.k]
 
         self.logger.info(f"selected indices: {topk_indices}")
-
         best_demonstrations = [candidate_data[i] for i in topk_indices]
 
-        # self.logger.info(f"Selected indices (top-k by loss): {topk_indices}")
         return best_demonstrations, None, total_flops
 
 
@@ -1552,23 +1548,6 @@ class MetaICLData(object):
 
         if self.local_rank<=0:
             self.logger.info(text)
-
-def prepro_sentence_pair_single_(ids1, ids2, max_length, tokenizer,
-                                bos_token_id, eos_token_id,
-                                allow_truncation=False):
-
-    if allow_truncation and len(ids1)+len(ids2) > max_length:
-        ids1 = ids1[len(ids1)+len(ids2)-max_length:] # len = max_length-len(ids2)
-        assert len(ids1)+len(ids2)==max_length
-
-    n_mask = max_length-len(ids1)-len(ids2)
-    assert n_mask>=0, (max_length, len(ids1), len(ids2))
-    input_ids = ids1+ids2 + [eos_token_id for _ in range(n_mask)]
-    #print("input_ids : ",len(input_ids))
-    attention_mask = [1 for _ in ids1+ids2] + [eos_token_id for _ in range(n_mask)]
-    token_type_ids = [0 for _ in ids1] + [1 for _ in ids2] + [eos_token_id for _ in range(n_mask)]
-
-    return input_ids, attention_mask, token_type_ids
 
 def prepro_sentence_pair_single(ids1, ids2, max_length,
                                 tokenizer, bos_token_id, eos_token_id,

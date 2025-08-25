@@ -13,17 +13,15 @@ conda activate metaicl
 # pip install the correct torch version here
 pip install git+https://github.com/huggingface/transformers.git@c37573806ab3526dd805c49cbe2489ad4d68a9d7
 pip install -U scikit-learn
-# pip install --upgrade transformers huggingface_hub
-bash build_feature.sh
 ```
+Also, we provide an [environment file](./environment.yml) including the python package versions we used in our experiments.
 
 2. We need to generate data features:
 ```bash
 python get_feature.py --task {task} --model {model key}
 ```
 
-
-3. Commands to run inferences (Use gpt2-large as an example).
+3. Commands to run inferences.
 ```bash
 # GradRE
 python test.py --dataset {dataset} --gpt2 {model key} --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k {number} --num_anchors {number} --estim
