@@ -1,6 +1,0 @@
-python test.py --dataset poem_sentiment --gpt2 deepseek-ai/deepseek-llm-7b-chat --method direct --out_dir out/dir --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k 3 --ranens --max_length 100
-python test.py --dataset poem_sentiment --gpt2 deepseek-ai/deepseek-llm-7b-chat --method direct --out_dir out/dir --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k 6 --ranens --max_length 100
-python test.py --dataset poem_sentiment --gpt2 deepseek-ai/deepseek-llm-7b-chat --method direct --out_dir out/dir --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k 8 --ranens --max_length 100
-python test.py --dataset poem_sentiment --gpt2 deepseek-ai/deepseek-llm-7b-chat --method direct --out_dir out/dir --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k 4 --ranens --max_length 100
-python test.py --dataset poem_sentiment --gpt2 deepseek-ai/deepseek-llm-7b-chat --method direct --out_dir out/dir --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k 5 --ranens --max_length 100
-python test.py --dataset poem_sentiment --gpt2 deepseek-ai/deepseek-llm-7b-chat --method direct --out_dir out/dir --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k 7 --ranens --max_length 100

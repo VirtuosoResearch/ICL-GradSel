@@ -1,3 +1,0 @@
-"""
-OpenAI experiment source code
-"""
