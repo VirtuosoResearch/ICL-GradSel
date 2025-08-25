@@ -1,9 +1,3 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-
 import os
 import argparse
 import pickle as pkl
@@ -46,9 +40,8 @@ def main(logger, args):
             "bos_token": "<bos>",
             "eos_token": "<eos>"
         }
-
         tokenizer.add_special_tokens(special_tokens)
-    ### checkpoint ...
+        
     if not args.do_zeroshot:
         if args.checkpoint is not None:
             checkpoint = args.checkpoint
@@ -59,11 +52,6 @@ def main(logger, args):
         assert os.path.exists(checkpoint)
     else:
         add_newlines = not args.gpt2.startswith("gpt2")
-        if False: #args.gpt2=="gpt-j-6B":
-            # we are using the HF veresion where GPT-J-6B checkpoint is not officially registered
-            # so need to download the model checkpoint and specify checkpoint
-            assert args.checkpoint is not None and os.path.exists(args.checkpoint)
-            args.gpt2 = args.checkpoint
         checkpoint = None
     
     metaicl_model = MetaICLModel(args.device, logger, args.out_dir,gpt2=args.gpt2)
@@ -71,16 +59,12 @@ def main(logger, args):
     if not os.path.exists(args.out_dir):
         os.makedirs(args.out_dir)
 
-    # setup hyperparams for data
-
     max_length_per_example = 128
     max_length = 128
     if args.use_demonstrations:
         orig_max_length = max_length
         if args.do_zeroshot:
-            # max_length = min(max_length_per_example * args.k, 1024)
             max_length = args.max_length * args.k
-            # max_length = max_length * args.k
         else:
             max_length = min(max_length * args.k, 1024)
 
@@ -90,19 +74,17 @@ def main(logger, args):
 
     metaicl_data = MetaICLData(args.device ,logger, tokenizer, args.method,args.use_demonstrations, args.k,
                                max_length=max_length, seed=args.seed, is_flops=args.is_flops)
-    # metaicl_data.to(device)
+
     results = []
     errors = []
     seeds = args.seed.split(",")
     config_split = "unseen_domain_test" if args.unseen_domain_only else "test"
 
     for seed in seeds:
-
         test_data = load_data(args.task, "test", args.k, seed=seed, config_split=config_split,
                              datasets=None if args.dataset is None else args.dataset.split(","), is_null=args.is_null)
         val_data = load_data(args.task, "dev", args.k, seed=seed, config_split=config_split,
                              datasets=None if args.dataset is None else args.dataset.split(","), is_null=args.is_null)
-
         print("*"*20)
         print(f"args.split : {args.split}")
 
@@ -126,13 +108,9 @@ def main(logger, args):
 
     if args.is_null:
         return
-
-    # logger.info("Macro-F1 of %s over %d target tasks: %.1f" % (args.task, len(results) // len(seeds), 100*np.mean(results)))
-
     if len(errors)>0:
         logger.info("You had errors with datasets:", ",".join(errors))
         logger.info("Please see the error messages")
-
 
 def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
         checkpoint, is_classification, add_newlines, tokenizer):
@@ -148,9 +126,7 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
                                       metaicl_data.method,
                                       "-topk" if args.topk else "",
                                       "-randomk" if args.randomk else "",
-                                      "-supcon" if args.supcon else "",
                                       "-ground" if args.ground else "",
-                                      "-unlabeled" if args.unlabeled else "",
                                       "-ranens" if args.ranens else "",
                                       "-forsel" if args.forsel else "",
                                       "-estim" if args.estim else "",
@@ -169,18 +145,14 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
         metaicl_data.tensorize_randomk(test_data, val_data, options=None,  add_newlines=add_newlines)
     elif args.bm25:
         metaicl_data.tensorize_bm25(test_data, val_data, options=None,  add_newlines=add_newlines)
-    elif args.uncertain:
-        metaicl_data.tensorize_uncertainty_rank(test_data, val_data, options=None,  add_newlines=add_newlines)
     elif args.ground:
         metaicl_data.tensorize_ground(args.gpt2, test_data, val_data, options=None,  add_newlines=add_newlines)
     elif args.groundestim:
         metaicl_data.tensorize_ground(args.gpt2, test_data, val_data, estimate=True, options=None,  add_newlines=add_newlines)
     elif args.forsel:
-        metaicl_data.tensorize_estimate(args.gpt2, test_data, val_data, args.is_quant,pseudo_k=args.pseudo_k, method="forsel", true_step=args.true_step, options=None,  add_newlines=add_newlines)
+        metaicl_data.tensorize_estimate(args.gpt2, test_data, val_data, args.is_quant, method="forsel", true_step=args.true_step, options=None,  add_newlines=add_newlines)
     elif args.ranens:
-        metaicl_data.tensorize_estimate(args.gpt2, test_data, val_data, args.is_quant,pseudo_k=args.pseudo_k, method="ranens", num_anchors=args.num_anchors, options=None,  add_newlines=add_newlines)
-    elif args.bridge:
-        metaicl_data.tensorize_bridge(args.gpt2, test_data, val_data, train_data, args.is_quant,pseudo_k=args.pseudo_k, method="ranens", num_anchors=args.num_anchors, options=None,  add_newlines=add_newlines, sub_sample=False, use_proj=True, proj_dim=256)
+        metaicl_data.tensorize_estimate(args.gpt2, test_data, val_data, args.is_quant, method="ranens", num_anchors=args.num_anchors, options=None,  add_newlines=add_newlines)
 
     metaicl_data.print_tensorized_example()
     logger.info(cache_path)
@@ -196,12 +168,8 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
         metaicl_model.resize(tokenizer)
 
     losses = []
-    n = 0
-
     losses, flops = metaicl_model.do_inference(metaicl_data, args.test_batch_size, is_flops=args.is_flops)
-    
     print(f"args.is_flops: {args.is_flops}, flops: {flops}")
-
     with open(cache_path, "wb") as f:
         pkl.dump(losses, f)
 
@@ -209,7 +177,6 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
 
     if args.is_null:
         return None
-
     if args.use_calibration:
         assert args.do_zeroshot
         bias_path = cache_path.replace("/"+task+"-"+args.split, "/"+task+"-"+args.split+"-null")
@@ -263,25 +230,19 @@ if __name__=='__main__':
 
     parser.add_argument("--topk",default=False, action="store_true")
     parser.add_argument("--randomk", default=False, action="store_true")
-    parser.add_argument("--supcon", default=False, action="store_true")
     parser.add_argument("--ground", default=False, action="store_true")
-    parser.add_argument("--unlabeled", default=False, action="store_true")
-    parser.add_argument("--multidata", default=False, action="store_true")
     parser.add_argument("--ranens", default=False, action="store_true")
     parser.add_argument("--forsel", default=False, action="store_true")
     parser.add_argument("--estim", default=False, action="store_true")
     parser.add_argument("--bm25", default=False, action="store_true")
-    parser.add_argument("--uncertain", default=False, action="store_true")
     parser.add_argument("--groundestim", default=False, action="store_true")
-    parser.add_argument("--bridge", default=False, action="store_true")
     
     parser.add_argument("--m", type=int, default=4)
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--is_quant", default=False, action="store_true")
-    parser.add_argument("--pseudo_k", default=3, type=int)
     parser.add_argument("--max_length", default=128, type=int)
     parser.add_argument("--is_flops", default=False, action="store_true")
-    parser.add_argument("--num_anchors", default=1, type=int)
+    parser.add_argument("--num_anchors", default=5, type=int)
     parser.add_argument("--true_step", default=0, type=int)
     args = parser.parse_args()
 

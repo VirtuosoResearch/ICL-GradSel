@@ -52,8 +52,8 @@ def extract_features_lasttoken(model, tokenizer, dataloader, device, output_file
     print(f"Features saved to {output_file}")
 
 def main(args):
-    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-3B")
-    model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.2-3B")
+    tokenizer = AutoTokenizer.from_pretrained(args.model)
+    model = AutoModelForCausalLM.from_pretrained(args.model)
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
@@ -75,5 +75,6 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--task", default="superglue-cb", type=str)
+    parser.add_argument("--model", default="meta-llama/Llama-3.2-3B", type=str)
     args = parser.parse_args()
     main(args)

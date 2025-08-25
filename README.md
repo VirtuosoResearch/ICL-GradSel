@@ -19,14 +19,18 @@ bash build_feature.sh
 
 2. We need to generate data features:
 ```bash
-python get_feature.py --task {task}
+python get_feature.py --task {task} --model {model key}
 ```
 
 
 3. Commands to run inferences (Use gpt2-large as an example).
 ```bash
-# GrapsICL
-python test.py --dataset {dataset} --gpt2 meta-llama/Llama-3.2-3B-Instruct --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 100 --k {number} --estim
+# GradRE
+python test.py --dataset {dataset} --gpt2 {model key} --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k {number} --num_anchors {number} --estim
+# GradFS
+python test.py --dataset {dataset} --gpt2 {model key} --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k {number} --forsel
+# GradCE
+python test.py --dataset {dataset} --gpt2 {model key} --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k {number} --gradestim
 ```
 
 ## Reference
