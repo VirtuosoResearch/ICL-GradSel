@@ -8,17 +8,17 @@ Here are the procedure to implement our work:
 
 1. Enviroment reconstruction
 ```bash
-conda create -n metaicl python=3.8
-conda activate metaicl
+conda create -n gradsel python=3.8
+conda activate gradsel
 # pip install the correct torch version here
 pip install git+https://github.com/huggingface/transformers.git@c37573806ab3526dd805c49cbe2489ad4d68a9d7
 pip install -U scikit-learn
 ```
 Also, we provide an [environment file](./environment.yml) including the python package versions we used in our experiments.
 
-2. We need to generate data features:
+2. We need to first generate data features:
 ```bash
-python get_feature.py --task {task} --model {model key}
+python ./utils/get_feature.py --task {task} --model {model key}
 ```
 
 3. Commands to run inferences.
@@ -30,6 +30,14 @@ python test.py --dataset {dataset} --gpt2 {model key} --method direct --do_zeros
 # GradCE
 python test.py --dataset {dataset} --gpt2 {model key} --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k {number} --gradestim
 ```
+
+4. Examples.
+
+Here we provide an example of running GradRE on SST-2 dataset.
+```bash
+python test.py --dataset sst2 --gpt2 deepseek-ai/deepseek-llm-7b-chat --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k 8 --ranens
+```
+The output is the F1-score of our method.
 
 ## Reference
 If you find this repository useful or happen to use it in a research paper, please cite our work with the following Bib information.
