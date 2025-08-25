@@ -1,4 +1,4 @@
-name: metaicl
+name: gradsel
 channels:
   - conda-forge
   - defaults
@@ -123,4 +123,4 @@ dependencies:
       - transformers==4.46.3
       - triton==3.0.0
       - urllib3==2.2.3
-prefix: /home/michael/anaconda3/envs/metaicl
+prefix: /home/michael/anaconda3/envs/gradsel
