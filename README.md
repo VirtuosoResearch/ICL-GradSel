@@ -33,7 +33,9 @@ python test.py --dataset {dataset} --gpt2 {model key} --method direct --do_zeros
 
 4. Examples.
 
-Here we provide an example of running GradRE on SST-2 dataset.
+For the linear-regression task, we provide the [usage file](./linear_regression/README.md) as an example.
+
+Then, we provide an example of running GradRE on SST-2 dataset.
 ```bash
 python test.py --dataset sst2 --gpt2 deepseek-ai/deepseek-llm-7b-chat --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k 8 --ranens
 ```
