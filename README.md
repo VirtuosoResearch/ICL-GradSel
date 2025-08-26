@@ -24,18 +24,18 @@ python ./utils/get_feature.py --task {task} --model {model key}
 3. Commands to run inferences.
 ```bash
 # GradRE
-python test.py --dataset {dataset} --model {model key} --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k {number} --num_anchors {number} --estim
+python main.py --dataset {dataset} --model {model key} --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k {number} --num_anchors {number} --estim
 # GradFS
-python test.py --dataset {dataset} --model {model key} --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k {number} --forsel
+python main.py --dataset {dataset} --model {model key} --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k {number} --forsel
 # GradCE
-python test.py --dataset {dataset} --model {model key} --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k {number} --gradestim
+python main.py --dataset {dataset} --model {model key} --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k {number} --gradestim
 ```
 
 4. Examples.
 
 Here we provide an example of running GradRE on SST-2 dataset.
 ```bash
-python test.py --dataset sst2 --model deepseek-ai/deepseek-llm-7b-chat --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k 8 --ranens
+python main.py --dataset sst2 --model deepseek-ai/deepseek-llm-7b-chat --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k 8 --ranens
 ```
 The output is the F1-score of our method.
 
