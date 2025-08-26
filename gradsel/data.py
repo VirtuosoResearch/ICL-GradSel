@@ -510,36 +510,6 @@ class gradselData(object):
             all_loss+=loss
         return all_loss, total_flops
 
-    def greedy_select_subset(self, model, candidate_data, dev_data, subset_size=10):
-        selected_indices, best_demonstrations = [], []
-        best_demonstrations = []
-
-        add_newlines = False
-        checkpoint = None
-        gradsel_model = gradselModel(logger=self.logger, out_dir= "./cache", device_num=self.device)
-        gradsel_model.load(checkpoint, model=model)
-        gradsel_model.resize()
-
-        while len(selected_indices) < self.k:
-            base_index = next(i for i in range(len(candidate_data)) if i not in selected_indices)
-            best_candidate = base_index
-            best_accuracy = self.evaluate_accuracy(model, gradsel_model, best_demonstrations+[candidate_data[base_index]], dev_data, candidate_data[0]["task"])
-            for i in range(len(candidate_data)):
-                if (i in selected_indices) or i==base_index: continue
-                candidate_demonstrations = best_demonstrations + [candidate_data[i]]
-                candidate_accuracy = self.evaluate_accuracy(model, gradsel_model, candidate_demonstrations, dev_data, candidate_data[0]["task"])
-                
-                self.logger.info(f"----------------candidate_accuracy : {candidate_accuracy}----------------")
-                if candidate_accuracy > best_accuracy:
-                    best_candidate = i
-                    best_accuracy = candidate_accuracy
-
-            selected_indices.append(best_candidate)
-            self.logger.info("**"*20)
-            self.logger.info(f"selected_indices: {selected_indices}; best_candidate : {best_candidate}")
-            best_demonstrations.append(candidate_data[best_candidate])
-        return best_demonstrations, best_accuracy
-
     def greedy_select_condition(self, model, gradsel_model, candidate_data, dev_data, subset_size=10):
             loss_index_pairs = []
             total_flops = 0
@@ -661,7 +631,6 @@ class gradselData(object):
                     ground, _, flops = self.greedy_select_condition_estim(model=model, gradsel_model=gradsel_model,candidate_data=samples, dev_data=dev_data)
 
                 total_flops+=flops
-                # def greedy_select_subset(self, candidate_data, dp_data, subset_size=10):
                 demonstrations = []
                 for i, neighbor_dp in enumerate(ground):
                     input_, output_ = self._prepro_each_datapoint(
@@ -844,7 +813,7 @@ class gradselData(object):
 
         return delta_P
 
-    def greedy_select_subset5(self, model, gradsel_model, candidate_data, dev_data, true_step=0):
+    def greedy_select_subset(self, model, gradsel_model, candidate_data, dev_data, true_step=0):
         def get_length(example, prompt_text, options):
             return max(len(prompt_text + example["input"] + op + "\n") for op in options)
 
@@ -1000,7 +969,7 @@ class gradselData(object):
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
         if method=="forsel":
-            ground, _, flops = self.greedy_select_subset5(model=model, gradsel_model=gradsel_model, candidate_data=candidate_data, dev_data=dev_data, true_step=true_step)
+            ground, _, flops = self.greedy_select_subset(model=model, gradsel_model=gradsel_model, candidate_data=candidate_data, dev_data=dev_data, true_step=true_step)
         elif method=='ranens':
             ground, _, flops = self.random_ensemble(model=model, k=self.k, gradsel_model=gradsel_model, candidate_data=candidate_data, dev_data=dev_data, num_anchors=num_anchors)
         else:
