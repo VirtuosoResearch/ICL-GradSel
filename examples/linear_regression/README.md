@@ -1,10 +1,5 @@
-# Linear-Time Demonstration Selection for In-Context Learning via Gradient Estimation
-- Authors: [Ziniu Zhang](https://ziniuzhang.github.io/), [Zhenshuo Zhang](https://zhenshuozhang.github.io/), [Dongyue Li](https://lidongyue12138.github.io/), [Lu Wang](https://web.eecs.umich.edu/~wangluxy/), [Jennifer Dy](https://mllabneu.github.io/) and [Hongyang R. Zhang](https://www.hongyangzhang.com/).
-
-
-
 ## Usage
-Here are the procedure to implement our work:
+Here is the procedure to implement our work:
 
 1. Download [model checkpoints](https://github.com/dtsip/in-context-learning/releases/download/initial/models.zip) and extract them in the current directory.
 
