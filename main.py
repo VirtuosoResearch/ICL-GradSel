@@ -13,27 +13,27 @@ from tqdm import tqdm
 from collections import Counter, defaultdict
 
 from torch.utils.data import TensorDataset, DataLoader, SequentialSampler
-from transformers import GPT2Tokenizer, AutoTokenizer
+from transformers import modelTokenizer, AutoTokenizer
 
-from metaicl.data import MetaICLData
-from metaicl.model import MetaICLModel
+from gradsel.data import gradselData
+from gradsel.model import gradselModel
 
-from utils.data import load_data
+from gradsel.utils.data import load_data
 
 def main(logger, args):
     assert (args.dataset is not None and args.task is None) or (args.dataset is None and args.task is not None)
 
-    if args.gpt2.startswith("gpt2"):
-        tokenizer = GPT2Tokenizer.from_pretrained(args.gpt2)
-    elif "Llama" or "deepseek" or "Qwen" in args.gpt2:
-        tokenizer = AutoTokenizer.from_pretrained(args.gpt2)
+    if args.model.startswith("model"):
+        tokenizer = modelTokenizer.from_pretrained(args.model)
+    elif "Llama" or "deepseek" or "Qwen" in args.model:
+        tokenizer = AutoTokenizer.from_pretrained(args.model)
     else:
-        tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        tokenizer = AutoTokenizer.from_pretrained("model")
 
     if tokenizer.padding_side=="left":
         tokenizer.padding_side = "right"
     add_newlines = True
-    if "Llama" or "Qwen" in args.gpt2:
+    if "Llama" or "Qwen" in args.model:
         special_tokens = {
             "pad_token": "<pad>",
             "unk_token": "<unk>",
@@ -51,10 +51,10 @@ def main(logger, args):
             checkpoint = os.path.join(args.out_dir, "model-{}.pt".format(args.global_step))
         assert os.path.exists(checkpoint)
     else:
-        add_newlines = not args.gpt2.startswith("gpt2")
+        add_newlines = not args.model.startswith("model")
         checkpoint = None
     
-    metaicl_model = MetaICLModel(args.device, logger, args.out_dir,gpt2=args.gpt2)
+    gradsel_model = gradselModel(args.device, logger, args.out_dir,model=args.model)
 
     if not os.path.exists(args.out_dir):
         os.makedirs(args.out_dir)
@@ -72,7 +72,7 @@ def main(logger, args):
     logger.info("batch_size=%d\tmax_length=%d\tmax_length_per_example=%d" % (
         args.test_batch_size, max_length, max_length_per_example))
 
-    metaicl_data = MetaICLData(args.device ,logger, tokenizer, args.method,args.use_demonstrations, args.k,
+    gradsel_data = gradselData(args.device ,logger, tokenizer, args.method,args.use_demonstrations, args.k,
                                max_length=max_length, seed=args.seed, is_flops=args.is_flops)
 
     results = []
@@ -99,7 +99,7 @@ def main(logger, args):
             options = test_data[0]["options"]
             assert np.all([d["options"]==options for d in test_data])
 
-        result = run(logger, test_task, metaicl_data, metaicl_model,
+        result = run(logger, test_task, gradsel_data, gradsel_model,
                      test_data, val_data, seed, checkpoint, is_classification, add_newlines, tokenizer)
         if result is None:
             errors.append("%s/%s" % (test_task, seed))
@@ -112,7 +112,7 @@ def main(logger, args):
         logger.info("You had errors with datasets:", ",".join(errors))
         logger.info("Please see the error messages")
 
-def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
+def run(logger, task, gradsel_data, gradsel_model, test_data, val_data, seed,
         checkpoint, is_classification, add_newlines, tokenizer):
 
     if args.do_zeroshot:
@@ -123,7 +123,7 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
                                   "{}-{}-{}{}{}{}{}{}{}{}{}{}{}{}{}.pkl".format(
                                       task,
                                       split_name,
-                                      metaicl_data.method,
+                                      gradsel_data.method,
                                       "-topk" if args.topk else "",
                                       "-randomk" if args.randomk else "",
                                       "-ground" if args.ground else "",
@@ -140,40 +140,40 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
     train_data = val_data[int(len(val_data)*train_split):]
     val_data = val_data[:int(len(val_data)*train_split)]
     if args.topk:
-        metaicl_data.tensorize_topk(test_data, val_data, options=None, add_newlines=add_newlines)
+        gradsel_data.tensorize_topk(test_data, val_data, options=None, add_newlines=add_newlines)
     elif args.randomk:
-        metaicl_data.tensorize_randomk(test_data, val_data, options=None,  add_newlines=add_newlines)
+        gradsel_data.tensorize_randomk(test_data, val_data, options=None,  add_newlines=add_newlines)
     elif args.bm25:
-        metaicl_data.tensorize_bm25(test_data, val_data, options=None,  add_newlines=add_newlines)
+        gradsel_data.tensorize_bm25(test_data, val_data, options=None,  add_newlines=add_newlines)
     elif args.ground:
-        metaicl_data.tensorize_ground(args.gpt2, test_data, val_data, options=None,  add_newlines=add_newlines)
+        gradsel_data.tensorize_ground(args.model, test_data, val_data, options=None,  add_newlines=add_newlines)
     elif args.groundestim:
-        metaicl_data.tensorize_ground(args.gpt2, test_data, val_data, estimate=True, options=None,  add_newlines=add_newlines)
+        gradsel_data.tensorize_ground(args.model, test_data, val_data, estimate=True, options=None,  add_newlines=add_newlines)
     elif args.forsel:
-        metaicl_data.tensorize_estimate(args.gpt2, test_data, val_data, args.is_quant, method="forsel", true_step=args.true_step, options=None,  add_newlines=add_newlines)
+        gradsel_data.tensorize_estimate(args.model, test_data, val_data, args.is_quant, method="forsel", true_step=args.true_step, options=None,  add_newlines=add_newlines)
     elif args.ranens:
-        metaicl_data.tensorize_estimate(args.gpt2, test_data, val_data, args.is_quant, method="ranens", num_anchors=args.num_anchors, options=None,  add_newlines=add_newlines)
+        gradsel_data.tensorize_estimate(args.model, test_data, val_data, args.is_quant, method="ranens", num_anchors=args.num_anchors, options=None,  add_newlines=add_newlines)
 
-    metaicl_data.print_tensorized_example()
+    gradsel_data.print_tensorized_example()
     logger.info(cache_path)
     prediction_path = cache_path.replace(".pkl", ".txt")
     if args.use_calibration:
         prediction_path = prediction_path.replace(".txt", "-calibrated.txt")
 
-    if metaicl_model.is_none():
-        metaicl_model.load(checkpoint, gpt2=args.gpt2, is_quant=args.is_quant)
-        metaicl_model.cuda()
-        metaicl_model.eval()
-    if "Llama" in args.gpt2:
-        metaicl_model.resize(tokenizer)
+    if gradsel_model.is_none():
+        gradsel_model.load(checkpoint, model=args.model, is_quant=args.is_quant)
+        gradsel_model.cuda()
+        gradsel_model.eval()
+    if "Llama" in args.model:
+        gradsel_model.resize(tokenizer)
 
     losses = []
-    losses, flops = metaicl_model.do_inference(metaicl_data, args.test_batch_size, is_flops=args.is_flops)
+    losses, flops = gradsel_model.do_inference(gradsel_data, args.test_batch_size, is_flops=args.is_flops)
     print(f"args.is_flops: {args.is_flops}, flops: {flops}")
     with open(cache_path, "wb") as f:
         pkl.dump(losses, f)
 
-    logger.info(f"len(losses): {len(losses)}; len(metaicl_data): {len(metaicl_data)}")
+    logger.info(f"len(losses): {len(losses)}; len(gradsel_data): {len(gradsel_data)}")
 
     if args.is_null:
         return None
@@ -188,10 +188,10 @@ def run(logger, task, metaicl_data, metaicl_model, test_data, val_data, seed,
         bias_losses = np.array(bias_losses)
         assert losses.shape == bias_losses.shape
         losses -= bias_losses
-    logger.info(f"Total_FLOPS: {(metaicl_data.total_flops+flops) / 1e9:.2f} GFLOPs")
-    predictions = metaicl_model.do_predict(metaicl_data, losses=losses)
+    logger.info(f"Total_FLOPS: {(gradsel_data.total_flops+flops) / 1e9:.2f} GFLOPs")
+    predictions = gradsel_model.do_predict(gradsel_data, losses=losses)
     groundtruths = [dp["output"] for dp in val_data]
-    perf = metaicl_data.evaluate(predictions, groundtruths, is_classification)
+    perf = gradsel_data.evaluate(predictions, groundtruths, is_classification)
     logger.info("Accuracy= %s", perf)
 
     with open(prediction_path, "w") as f:
@@ -221,12 +221,12 @@ if __name__=='__main__':
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--use_random_english_words", default=False, action="store_true")
 
-    parser.add_argument("--out_dir", type=str, required=True, default="out/gpt2-large")
+    parser.add_argument("--out_dir", type=str, default="out/model-large")
 
     parser.add_argument("--split", type=str, default="test")
     parser.add_argument("--is_null", default=False, action="store_true")
     parser.add_argument("--method", type=str, default="direct", choices=["direct", "channel"])
-    parser.add_argument("--gpt2", type=str, default="gpt2-large")
+    parser.add_argument("--model", type=str, default="model-large")
 
     parser.add_argument("--topk",default=False, action="store_true")
     parser.add_argument("--randomk", default=False, action="store_true")

@@ -13,7 +13,7 @@ import warnings
 import torch.nn.functional as F
 warnings.filterwarnings("ignore", category=UserWarning)
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from transformers import GPT2LMHeadModel, GPT2Tokenizer, OPTForCausalLM
+from transformers import modelLMHeadModel, modelTokenizer, OPTForCausalLM
 from tqdm import tqdm
 from thop import profile
 
@@ -32,8 +32,7 @@ from scipy.spatial.distance import cosine
 from sklearn.linear_model import LinearRegression
 
 
-from utils.data import load_data
-from metaicl.model import MetaICLModel
+from gradsel.model import gradselModel
 from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig
 
 
@@ -129,7 +128,7 @@ def _get_embedding_loss(model, tokenizer, input_texts, pad_to_length, is_flops=F
 
     return ce_loss, effective_embedding_grad, flops
 
-class MetaICLData(object):
+class gradselData(object):
 
     def __init__(self, device=0, logger=None, tokenizer=None, method="channel", use_demonstrations=True, k=16,
                  max_length=1024, max_length_per_example=256,
@@ -160,7 +159,7 @@ class MetaICLData(object):
 
         if self.tokenizer is None:
             from transformers import AutoTokenizer
-            self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
+            self.tokenizer = AutoTokenizer.from_pretrained("model")
 
     def __len__(self):
         if self.tensorized_inputs is None:
@@ -168,7 +167,7 @@ class MetaICLData(object):
         return len(self.tensorized_inputs["input_ids"])
 
     def __str__(self):
-        text = "[MetaICL Data]: method=%d, "
+        text = "[gradsel Data]: method=%d, "
         if self.use_demonstrations:
             text += "%d demonstrations\n" % self.k
         else:
@@ -181,7 +180,7 @@ class MetaICLData(object):
             text += self.print_tensorized_example(return_string=True)
         return ("="*50) + "\n" + text + "\n" + ("="*50)
 
-    def forward(self, gpt2, metaicl_model, demonstrations, dp, task, return_loss = False):
+    def forward(self, model, gradsel_model, demonstrations, dp, task, return_loss = False):
         logger = logging.getLogger(__name__)
         device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
         tokenizer = self.tokenizer
@@ -203,19 +202,19 @@ class MetaICLData(object):
             input_ids = input_ids.to(device)
             attention_mask = attention_mask.to(device)
             token_type_ids = token_type_ids.to(device)
-            results, _ = metaicl_model.run_model(input_ids, attention_mask, token_type_ids)
+            results, _ = gradsel_model.run_model(input_ids, attention_mask, token_type_ids)
 
             if self.is_flops:
                 self.logger.info(f"len(input_ids): {input_ids.size()}")
-                flops, params = profile(metaicl_model.model, inputs=(input_ids,))
+                flops, params = profile(gradsel_model.model, inputs=(input_ids,))
             else: flops =0
 
             return input_ids, results.cpu().detach().item(), flops
 
         option_tokens = [tokenizer(option)["input_ids"] for option in dp['options']]
         input_tokens = tokenizer(dp["input"] + " ")["input_ids"]
-        metaicl_model.model.eval()
-        # metaicl_model.model.to(device)
+        gradsel_model.model.eval()
+        # gradsel_model.model.to(device)
 
         one_trial_losses = []
 
@@ -233,7 +232,7 @@ class MetaICLData(object):
             return one_trial_losses[idx], total_flops
         return label_id, label, total_flops
     
-    def random_ensemble(self, gpt2, metaicl_model, test_data, dev_data,
+    def random_ensemble(self, model, gradsel_model, test_data, dev_data,
                         num_combinations=100, k=8, seed=42, num_anchors=None):
         from collections import defaultdict
         import random
@@ -271,7 +270,7 @@ class MetaICLData(object):
                 f"Input: {test_data[idx]['input']} Label: {test_data[idx]['output']}\n" for idx in anchor
             ])
             base_losses, base_gradients, _, flops = zip(*[
-                self.forward_estim(gpt2, metaicl_model, anchor_prompt, dp, dp["task"], return_loss=True)
+                self.forward_estim(model, gradsel_model, anchor_prompt, dp, dp["task"], return_loss=True)
                 for dp in dev_data
             ])
             total_flops += sum(flops)
@@ -296,7 +295,7 @@ class MetaICLData(object):
                 for dp_idx, dp in enumerate(dev_data):
                     dev_str = f"Input: {dp['input']} Label:"
                     delta_P = self.compute_embedding_difference_(
-                        gpt2, metaicl_model, anchor_prompt + dev_str, target_prompt + dev_str
+                        model, gradsel_model, anchor_prompt + dev_str, target_prompt + dev_str
                     )
 
                     taylor_losses = []
@@ -329,7 +328,7 @@ class MetaICLData(object):
         return selected_data, mean_acc_overall, total_flops
 
 
-    def random_ensemble_nearest_anchor(self, gpt2, metaicl_model, candidate_data, dev_data, num_combinations=100, k=8, seed=42, num_anchors=1):
+    def random_ensemble_nearest_anchor(self, model, gradsel_model, candidate_data, dev_data, num_combinations=100, k=8, seed=42, num_anchors=1):
         random.seed(seed)
         device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
 
@@ -361,7 +360,7 @@ class MetaICLData(object):
                 f"Input: {candidate_data[idx]['input']} Label: {candidate_data[idx]['output']}\n" for idx in anchor
             ])
             base_losses, base_gradients, _, flops = zip(*[
-                self.forward_estim(gpt2, metaicl_model, anchor_prompt, dp, dp["task"], return_loss=True)
+                self.forward_estim(model, gradsel_model, anchor_prompt, dp, dp["task"], return_loss=True)
                 for dp in dev_data
             ])
             total_flops += sum(flops)
@@ -386,7 +385,7 @@ class MetaICLData(object):
             for dp_idx, dp in enumerate(dev_data):
                 dev_str = f"Input: {dp['input']} Label:"
                 delta_P = self.compute_embedding_difference_(
-                    gpt2, metaicl_model, anchor_prompt + dev_str, target_prompt + dev_str
+                    model, gradsel_model, anchor_prompt + dev_str, target_prompt + dev_str
                 )
 
                 taylor_losses = []
@@ -482,7 +481,7 @@ class MetaICLData(object):
         self.metadata = metadata
 
 
-    def evaluate_accuracy(self, gpt2, metaicl_model, demonstrations, dev_data, task):
+    def evaluate_accuracy(self, model, gradsel_model, demonstrations, dev_data, task):
         correct = 0; total = len(dev_data)
         input_str = ""
         for item in demonstrations:
@@ -490,13 +489,13 @@ class MetaICLData(object):
         input_token = self.tokenizer(input_str)["input_ids"]
         total_flops=0
         for idx, dp in enumerate(dev_data):
-            _, label, flops = self.forward(gpt2, metaicl_model, input_token, dp, task)
+            _, label, flops = self.forward(model, gradsel_model, input_token, dp, task)
             if self.is_flops: self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
             total_flops+=flops
             if label == dp["output"]: correct += 1
         return correct / total if total > 0 else 0 , total_flops
 
-    def evaluate_loss(self, gpt2, metaicl_model, demonstrations, dev_data, task):
+    def evaluate_loss(self, model, gradsel_model, demonstrations, dev_data, task):
         total = len(dev_data)
         input_str = ""
         all_loss = 0.0
@@ -505,30 +504,30 @@ class MetaICLData(object):
         input_token = self.tokenizer(input_str)["input_ids"]
         total_flops =0
         for idx, dp in enumerate(dev_data):
-            loss, flops = self.forward(gpt2, metaicl_model, input_token, dp, task, return_loss=True)
+            loss, flops = self.forward(model, gradsel_model, input_token, dp, task, return_loss=True)
             total_flops+=flops
             if self.is_flops: self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
             all_loss+=loss
         return all_loss, total_flops
 
-    def greedy_select_subset(self, gpt2, candidate_data, dev_data, subset_size=10):
+    def greedy_select_subset(self, model, candidate_data, dev_data, subset_size=10):
         selected_indices, best_demonstrations = [], []
         best_demonstrations = []
 
         add_newlines = False
         checkpoint = None
-        metaicl_model = MetaICLModel(logger=self.logger, out_dir= "./cache", device_num=self.device)
-        metaicl_model.load(checkpoint, gpt2=gpt2)
-        metaicl_model.resize()
+        gradsel_model = gradselModel(logger=self.logger, out_dir= "./cache", device_num=self.device)
+        gradsel_model.load(checkpoint, model=model)
+        gradsel_model.resize()
 
         while len(selected_indices) < self.k:
             base_index = next(i for i in range(len(candidate_data)) if i not in selected_indices)
             best_candidate = base_index
-            best_accuracy = self.evaluate_accuracy(gpt2, metaicl_model, best_demonstrations+[candidate_data[base_index]], dev_data, candidate_data[0]["task"])
+            best_accuracy = self.evaluate_accuracy(model, gradsel_model, best_demonstrations+[candidate_data[base_index]], dev_data, candidate_data[0]["task"])
             for i in range(len(candidate_data)):
                 if (i in selected_indices) or i==base_index: continue
                 candidate_demonstrations = best_demonstrations + [candidate_data[i]]
-                candidate_accuracy = self.evaluate_accuracy(gpt2, metaicl_model, candidate_demonstrations, dev_data, candidate_data[0]["task"])
+                candidate_accuracy = self.evaluate_accuracy(model, gradsel_model, candidate_demonstrations, dev_data, candidate_data[0]["task"])
                 
                 self.logger.info(f"----------------candidate_accuracy : {candidate_accuracy}----------------")
                 if candidate_accuracy > best_accuracy:
@@ -541,13 +540,13 @@ class MetaICLData(object):
             best_demonstrations.append(candidate_data[best_candidate])
         return best_demonstrations, best_accuracy
 
-    def greedy_select_condition(self, gpt2, metaicl_model, candidate_data, dev_data, subset_size=10):
+    def greedy_select_condition(self, model, gradsel_model, candidate_data, dev_data, subset_size=10):
             loss_index_pairs = []
             total_flops = 0
 
             for i in range(len(candidate_data)):
                 demonstrations = [candidate_data[i]]
-                loss, flops = self.evaluate_loss(gpt2, metaicl_model, demonstrations, dev_data, candidate_data[0]["task"])
+                loss, flops = self.evaluate_loss(model, gradsel_model, demonstrations, dev_data, candidate_data[0]["task"])
                 self.logger.info(f"Index {i} - Loss: {loss}")
                 total_flops += flops
                 loss_index_pairs.append((loss, i))
@@ -562,7 +561,7 @@ class MetaICLData(object):
 
             return best_demonstrations, best_loss, total_flops
 
-    def greedy_select_condition_estim(self, gpt2, metaicl_model, candidate_data, dev_data):
+    def greedy_select_condition_estim(self, model, gradsel_model, candidate_data, dev_data):
         def build_text(prefix_text, base_sample, query_sample, op):
             return prefix_text + base_sample["input"] + base_sample["output"] + query_sample["input"] + op + "\n"
         
@@ -582,7 +581,7 @@ class MetaICLData(object):
             for op in self.options:
                 base_text = build_text(prompt_text, candidate_data[0], query, op)
                 loss_op, embedding_grad_op, flops = _get_embedding_loss(
-                    model=metaicl_model, tokenizer=self.tokenizer, input_texts=[base_text], pad_to_length=max_token_len, is_flops=self.is_flops
+                    model=gradsel_model, tokenizer=self.tokenizer, input_texts=[base_text], pad_to_length=max_token_len, is_flops=self.is_flops
                 )
                 loss_option_dict[op] = loss_op
                 gradient_option_dict[op] = embedding_grad_op
@@ -593,7 +592,7 @@ class MetaICLData(object):
                 for op in self.options:
                     candidate_text = build_text(prompt_text, candidate_sample, query, op)
                     delta_P = self.compute_embedding_difference(
-                        gpt2, metaicl_model, base_str=base_text, candidate_str=candidate_text, pad_to_length=max_token_len
+                        model, gradsel_model, base_str=base_text, candidate_str=candidate_text, pad_to_length=max_token_len
                     )
                     taylor_correction = torch.sum(gradient_option_dict[op] * delta_P).item()
                     taylor_approx_loss = loss_option_dict[op] + taylor_correction
@@ -611,7 +610,7 @@ class MetaICLData(object):
         return best_demonstrations, None, total_flops
 
 
-    def tensorize_ground(self, gpt2, _test_data, _val_data, estimate=False, options=None, add_newlines=True):
+    def tensorize_ground(self, model, _test_data, _val_data, estimate=False, options=None, add_newlines=True):
         print("options: ", options)
         if options is not None:
             print("len(_test_data) : ", len(_test_data))
@@ -639,10 +638,10 @@ class MetaICLData(object):
 
         add_newlines = False
         checkpoint = None
-        metaicl_model = MetaICLModel(logger=self.logger, out_dir= "./cache", device_num=self.device)
-        metaicl_model.load(checkpoint, gpt2=gpt2)
-        if "Llama" in gpt2:
-            metaicl_model.resize(self.tokenizer)
+        gradsel_model = gradselModel(logger=self.logger, out_dir= "./cache", device_num=self.device)
+        gradsel_model.load(checkpoint, model=model)
+        if "Llama" in model:
+            gradsel_model.resize(self.tokenizer)
 
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
@@ -657,9 +656,9 @@ class MetaICLData(object):
                 samples, top_indices, _ = self._select_top_k_neighbors(dp_feature, test_features, candidate_data, k=20,dp_idx=-1)
 
                 if estimate==False:
-                    ground, _, flops = self.greedy_select_condition(gpt2=gpt2, metaicl_model=metaicl_model,candidate_data=samples, dev_data=dev_data, subset_size=self.k)
+                    ground, _, flops = self.greedy_select_condition(model=model, gradsel_model=gradsel_model,candidate_data=samples, dev_data=dev_data, subset_size=self.k)
                 else:
-                    ground, _, flops = self.greedy_select_condition_estim(gpt2=gpt2, metaicl_model=metaicl_model,candidate_data=samples, dev_data=dev_data)
+                    ground, _, flops = self.greedy_select_condition_estim(model=model, gradsel_model=gradsel_model,candidate_data=samples, dev_data=dev_data)
 
                 total_flops+=flops
                 # def greedy_select_subset(self, candidate_data, dp_data, subset_size=10):
@@ -702,22 +701,22 @@ class MetaICLData(object):
         topk_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:k]
         return [candidate_data[i] for i in topk_indices], topk_indices, scores
 
-    def compute_loss_and_gradient(self, gpt2, metaicl_model, tokenizer, input_tokens, output_tokens, device):
+    def compute_loss_and_gradient(self, model, gradsel_model, tokenizer, input_tokens, output_tokens, device):
 
         tokenizer.pad_token = tokenizer.eos_token
         input_ids = tokenizer(input_tokens, return_tensors="pt", padding="max_length", truncation=True, max_length=self.max_length).input_ids.to(device)
         output_ids = tokenizer(output_tokens, return_tensors="pt")["input_ids"][0][-1].to(device)
 
         with torch.no_grad():
-            if "gpt" in gpt2:
-                embedding = metaicl_model.model.transformer.wte(input_ids)
-            elif "opt" in gpt2: embedding = metaicl_model.model.model.decoder.embed_tokens(input_ids)
+            if "gpt" in model:
+                embedding = gradsel_model.model.transformer.wte(input_ids)
+            elif "opt" in model: embedding = gradsel_model.model.model.decoder.embed_tokens(input_ids)
             else:
-                embedding = metaicl_model.model.model.embed_tokens(input_ids)
+                embedding = gradsel_model.model.model.embed_tokens(input_ids)
         embedding.requires_grad = True 
-        embedding = embedding.to(metaicl_model.model.dtype)
+        embedding = embedding.to(gradsel_model.model.dtype)
 
-        output_logits = metaicl_model.model(inputs_embeds=embedding).logits
+        output_logits = gradsel_model.model(inputs_embeds=embedding).logits
         last_token_idx = input_ids.shape[1] - 1 
         log_probs = F.log_softmax(output_logits[0, last_token_idx, :], dim=-1) 
 
@@ -726,13 +725,13 @@ class MetaICLData(object):
         
         flops = 0
         if self.is_flops:
-            flops, params = profile(metaicl_model.model, inputs=(input_ids,))
+            flops, params = profile(gradsel_model.model, inputs=(input_ids,))
             self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
         
         loss.backward()
         return loss.item(), embedding.grad, flops
 
-    def compute_loss_and_gradient_op(self, gpt2, metaicl_model, tokenizer, input_tokens, output_tokens, device):
+    def compute_loss_and_gradient_op(self, model, gradsel_model, tokenizer, input_tokens, output_tokens, device):
 
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -740,15 +739,15 @@ class MetaICLData(object):
         output_ids = tokenizer(output_tokens, return_tensors="pt")["input_ids"][0][-1].to(device)
 
         with torch.no_grad():
-            if "gpt" in gpt2:
-                embedding = metaicl_model.model.transformer.wte(input_ids)
-            elif "opt" in gpt2: embedding = metaicl_model.model.model.decoder.embed_tokens(input_ids)
+            if "gpt" in model:
+                embedding = gradsel_model.model.transformer.wte(input_ids)
+            elif "opt" in model: embedding = gradsel_model.model.model.decoder.embed_tokens(input_ids)
             else:
-                embedding = metaicl_model.model.model.embed_tokens(input_ids)
+                embedding = gradsel_model.model.model.embed_tokens(input_ids)
         embedding.requires_grad = True 
-        embedding = embedding.to(metaicl_model.model.dtype)
+        embedding = embedding.to(gradsel_model.model.dtype)
 
-        output_logits = metaicl_model.model(inputs_embeds=embedding).logits
+        output_logits = gradsel_model.model(inputs_embeds=embedding).logits
         last_token_idx = input_ids.shape[1] - 1 
         log_probs = F.log_softmax(output_logits[0, last_token_idx, :], dim=-1) 
 
@@ -756,13 +755,13 @@ class MetaICLData(object):
         loss = -log_probs[target_token]
         
         if self.is_flops: 
-            flops, params = profile(metaicl_model.model, inputs=(input_ids,))
+            flops, params = profile(gradsel_model.model, inputs=(input_ids,))
             self.logger.info(f"----- flops : {flops / 1e9:.2f} GFLOPs")
         
         loss.backward()
         return loss.item(), embedding.grad, flops
 
-    def forward_estim(self, gpt2, metaicl_model, demonstrations, dp, task, return_loss=False):
+    def forward_estim(self, model, gradsel_model, demonstrations, dp, task, return_loss=False):
 
         logger = logging.getLogger(__name__)
         device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
@@ -775,8 +774,8 @@ class MetaICLData(object):
         gradients = []
         total_flops =0
         for option in option_tokens:
-            loss, grad, flops = self.compute_loss_and_gradient(gpt2, metaicl_model, tokenizer, input_tokens, option, device)
-            # compute_loss_and_gradient(self, gpt2, model, tokenizer, input_tokens, output_tokens, device):
+            loss, grad, flops = self.compute_loss_and_gradient(model, gradsel_model, tokenizer, input_tokens, option, device)
+            # compute_loss_and_gradient(self, model, model, tokenizer, input_tokens, output_tokens, device):
             losses.append(loss)
             gradients.append(grad)
             total_flops+=flops
@@ -788,7 +787,7 @@ class MetaICLData(object):
             return losses, gradients, label_id, total_flops
         return label_id, label, total_flops
     
-    def compute_embedding_difference(self, gpt2, metaicl_model, base_str, candidate_str, pad_to_length):
+    def compute_embedding_difference(self, model, gradsel_model, base_str, candidate_str, pad_to_length):
         device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
         tokenizer = self.tokenizer
 
@@ -796,18 +795,18 @@ class MetaICLData(object):
         input_tokens_2 = tokenizer(candidate_str, return_tensors="pt", padding="max_length", truncation=True, max_length=pad_to_length)["input_ids"].to(device)
 
         with torch.no_grad():
-            if "gpt" in gpt2:
-                embedding_1 = metaicl_model.model.transformer.wte(input_tokens_1)
-                embedding_2 = metaicl_model.model.transformer.wte(input_tokens_2)
-            elif "opt" in gpt2:
-                embedding_1 = metaicl_model.model.model.decoder.embed_tokens(input_tokens_1)
-                embedding_2 = metaicl_model.model.model.decoder.embed_tokens(input_tokens_2)
+            if "gpt" in model:
+                embedding_1 = gradsel_model.model.transformer.wte(input_tokens_1)
+                embedding_2 = gradsel_model.model.transformer.wte(input_tokens_2)
+            elif "opt" in model:
+                embedding_1 = gradsel_model.model.model.decoder.embed_tokens(input_tokens_1)
+                embedding_2 = gradsel_model.model.model.decoder.embed_tokens(input_tokens_2)
             else:
-                embedding_1 = metaicl_model.model.model.embed_tokens(input_tokens_1)
-                embedding_2 = metaicl_model.model.model.embed_tokens(input_tokens_2)
+                embedding_1 = gradsel_model.model.model.embed_tokens(input_tokens_1)
+                embedding_2 = gradsel_model.model.model.embed_tokens(input_tokens_2)
             
-        embedding_1 = embedding_1.to(metaicl_model.model.dtype)
-        embedding_2 = embedding_2.to(metaicl_model.model.dtype)
+        embedding_1 = embedding_1.to(gradsel_model.model.dtype)
+        embedding_2 = embedding_2.to(gradsel_model.model.dtype)
 
         delta_P = embedding_2 - embedding_1.detach()
 
@@ -815,7 +814,7 @@ class MetaICLData(object):
         return delta_P_effective
 
 
-    def compute_embedding_difference_(self, gpt2, metaicl_model, base_str, candidate_str):
+    def compute_embedding_difference_(self, model, gradsel_model, base_str, candidate_str):
         device = torch.device(f"cuda:{self.device}" if torch.cuda.is_available() else "cpu")
         input_tokens_1 = self.tokenizer(base_str, return_tensors="pt", truncation=True, max_length=self.max_length)["input_ids"].to(device)
         input_tokens_2 = self.tokenizer(candidate_str, return_tensors="pt", truncation=True, max_length=self.max_length)["input_ids"].to(device)
@@ -827,25 +826,25 @@ class MetaICLData(object):
 
 
         with torch.no_grad():
-            if "gpt" in gpt2:
-                embedding_1 = metaicl_model.model.transformer.wte(input_tokens_1)
-                embedding_2 = metaicl_model.model.transformer.wte(input_tokens_2)
-            elif "opt" in gpt2:
-                embedding_1 = metaicl_model.model.model.decoder.embed_tokens(input_tokens_1)
-                embedding_2 = metaicl_model.model.model.decoder.embed_tokens(input_tokens_2)
+            if "gpt" in model:
+                embedding_1 = gradsel_model.model.transformer.wte(input_tokens_1)
+                embedding_2 = gradsel_model.model.transformer.wte(input_tokens_2)
+            elif "opt" in model:
+                embedding_1 = gradsel_model.model.model.decoder.embed_tokens(input_tokens_1)
+                embedding_2 = gradsel_model.model.model.decoder.embed_tokens(input_tokens_2)
             else:
-                embedding_1 = metaicl_model.model.model.embed_tokens(input_tokens_1)
-                embedding_2 = metaicl_model.model.model.embed_tokens(input_tokens_2)
+                embedding_1 = gradsel_model.model.model.embed_tokens(input_tokens_1)
+                embedding_2 = gradsel_model.model.model.embed_tokens(input_tokens_2)
         
-        embedding_1 = embedding_1.to(metaicl_model.model.dtype)
-        embedding_2 = embedding_2.to(metaicl_model.model.dtype)
+        embedding_1 = embedding_1.to(gradsel_model.model.dtype)
+        embedding_2 = embedding_2.to(gradsel_model.model.dtype)
 
         delta_P = embedding_2 - embedding_1.detach()
 
 
         return delta_P
 
-    def greedy_select_subset5(self, gpt2, metaicl_model, candidate_data, dev_data, true_step=0):
+    def greedy_select_subset5(self, model, gradsel_model, candidate_data, dev_data, true_step=0):
         def get_length(example, prompt_text, options):
             return max(len(prompt_text + example["input"] + op + "\n") for op in options)
 
@@ -888,7 +887,7 @@ class MetaICLData(object):
                     base_text_option_dict[op] = base_text
 
                     loss_op, embedding_grad_op, flops = _get_embedding_loss(
-                        model=metaicl_model, tokenizer=self.tokenizer,
+                        model=gradsel_model, tokenizer=self.tokenizer,
                         input_texts=[base_text], pad_to_length=max_token_len,
                         is_flops=self.is_flops
                     )
@@ -910,7 +909,7 @@ class MetaICLData(object):
                         for op in self.options:
                             candidate_text = build_text(prompt_text, candidate_sample, query,op)
                             loss_op, _, flops = _get_embedding_loss(
-                                model=metaicl_model, tokenizer=self.tokenizer,
+                                model=gradsel_model, tokenizer=self.tokenizer,
                                 input_texts=[candidate_text], pad_to_length=max_token_len,
                                 is_flops=self.is_flops
                             )
@@ -925,7 +924,7 @@ class MetaICLData(object):
                         for op in self.options:
                             candidate_text = build_text(prompt_text, candidate_sample, query, op)
                             delta_P = self.compute_embedding_difference(
-                                gpt2, metaicl_model, base_str=base_text_option_dict[op],
+                                model, gradsel_model, base_str=base_text_option_dict[op],
                                 candidate_str=candidate_text, pad_to_length=max_token_len
                             )
                             taylor_correction = torch.sum(gradient_option_dict[op] * delta_P).item()
@@ -962,7 +961,7 @@ class MetaICLData(object):
         top_k_indices = np.argsort(similarities)[-k:][::-1]
         return [candidate_data[i] for i in top_k_indices], top_k_indices , similarities
 
-    def tensorize_estimate(self, gpt2, _test_data, _val_data, is_quant, method="forsel", num_anchors=1, true_step=0, options=None, add_newlines=True):
+    def tensorize_estimate(self, model, _test_data, _val_data, is_quant, method="forsel", num_anchors=1, true_step=0, options=None, add_newlines=True):
         print("options: ", options)
         if options is not None:
             print("len(_test_data) : ", len(_test_data))
@@ -989,21 +988,21 @@ class MetaICLData(object):
 
         add_newlines = True
         checkpoint = None
-        metaicl_model = MetaICLModel(logger=self.logger, out_dir= "./cache", device_num=self.device)
-        print(f"-------------- gpt2: {gpt2} ------------")
-        metaicl_model.load(gpt2=gpt2,is_quant=is_quant)
+        gradsel_model = gradselModel(logger=self.logger, out_dir= "./cache", device_num=self.device)
+        print(f"-------------- model: {model} ------------")
+        gradsel_model.load(model=model,is_quant=is_quant)
 
-        print("gpt2 : ",gpt2)
-        print("origin type(metaicl_model) : ",type(metaicl_model.model))
-        if "Llama" in gpt2:
-           metaicl_model.resize(self.tokenizer)
+        print("model : ",model)
+        print("origin type(gradsel_model) : ",type(gradsel_model.model))
+        if "Llama" in model:
+           gradsel_model.resize(self.tokenizer)
 
         input_ids, attention_mask, token_type_ids = [], [], []
         metadata = []
         if method=="forsel":
-            ground, _, flops = self.greedy_select_subset5(gpt2=gpt2, metaicl_model=metaicl_model, candidate_data=candidate_data, dev_data=dev_data, true_step=true_step)
+            ground, _, flops = self.greedy_select_subset5(model=model, gradsel_model=gradsel_model, candidate_data=candidate_data, dev_data=dev_data, true_step=true_step)
         elif method=='ranens':
-            ground, _, flops = self.random_ensemble(gpt2=gpt2, k=self.k, metaicl_model=metaicl_model, candidate_data=candidate_data, dev_data=dev_data, num_anchors=num_anchors)
+            ground, _, flops = self.random_ensemble(model=model, k=self.k, gradsel_model=gradsel_model, candidate_data=candidate_data, dev_data=dev_data, num_anchors=num_anchors)
         else:
             ground, _, flops = self.greedy_select_subset_cone
         demonstrations = []
@@ -1452,11 +1451,11 @@ class MetaICLData(object):
             token_type_ids=torch.LongTensor(token_type_ids))
         self.metadata = metadata
     
-    def score_by_subset(self, gpt2, metaicl_model, candidate_data, dev_data, subset_indices):
+    def score_by_subset(self, model, gradsel_model, candidate_data, dev_data, subset_indices):
         print(f"Subset indices: {subset_indices}")
         integer_indices = subset_indices.nonzero(as_tuple=True)[0]
         demonstrations = [candidate_data[i] for i in integer_indices]
-        acc = self.evaluate_accuracy(gpt2, metaicl_model, demonstrations, dev_data, candidate_data[0]["task"])
+        acc = self.evaluate_accuracy(model, gradsel_model, demonstrations, dev_data, candidate_data[0]["task"])
         
         return acc, demonstrations
 

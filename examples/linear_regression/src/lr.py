@@ -11,8 +11,200 @@ import numpy as np
 import math
 
 from eval import get_run_metrics, read_run_dir, get_model_from_run
-from tasks import get_task_sampler
+
+sns.set_theme('notebook', 'darkgrid')
+palette = sns.color_palette('colorblind')
+
+run_dir = "../models"
+
 from samplers import get_data_sampler
+from tasks import get_task_sampler
+task = "linear_regression"
+#task = "sparse_linear_regression"
+#task = "decision_tree"
+#task = "relu_2nn_regression"
+
+run_id = "pretrained"  # if you train more models, replace with the run_id from the table above
+
+run_path = os.path.join(run_dir, task, run_id)
+recompute_metrics = False
+print(run_path)
+if recompute_metrics:
+    get_run_metrics(run_path)  # these are normally precomputed at the end of training
+
+model, conf = get_model_from_run(run_path)
+
+n_dims = conf.model.n_dims
+batch_size = conf.training.batch_size
+
+data_sampler = get_data_sampler(conf.training.data, n_dims)
+task_sampler = get_task_sampler(
+    conf.training.task,
+    n_dims,
+    batch_size,
+    **conf.training.task_kwargs
+)
+
+def predict_full_label(model, xs, ys, labels):
+    with torch.no_grad():
+        pred = model(xs, ys)
+    metric = task.get_metric()
+    loss = metric(pred, labels).cpu().numpy()
+
+    return pred, loss.mean(axis=0)
+
+import torch.nn.functional as F
+import copy
+from datetime import datetime
+
+device = 'cuda:1'
+model = model.to(device)
+
+model.eval()
+use_checkpoint = True
+if not use_checkpoint:
+    n_total = 5
+    n_labeled = 2
+    n_dims = 2
+    b_size = 3
+else:
+    n_total = 41
+    n_labeled = 10
+    n_dims = conf.model.n_dims
+    #b_size = conf.training.batch_size
+    b_size = 50
+ratio = n_total // n_labeled
+
+n_unlabeled = n_total - n_labeled
+runs = 1
+loss_full_label_list = []
+loss_random_list = []
+loss_beta_list = []
+loss_loss_list = []
+loss_contrastive_list = []
+loss_fs_inference_list = []
+loss_fs_estimate_list = []
+
+same_distribution = True
+
+noise = 1
+add_set_size = 5
+
+def random_select(model, xs, ys, beta, sample_list, n_labeled, set_size_list):
+    loss_list = []
+    for set_size in set_size_list:
+        seq_list = []
+        for i in range(xs.shape[0]):
+            seq_list.append(Input_sequence(xs[i], ys[i], n_labeled, beta[i], i))
+
+        for i in range(xs.shape[0]):
+            for j in range(set_size):
+                select_index = torch.randint(0, len(sample_list), (1,))
+                seq_list[i].add_sample(sample_list[select_index])
+
+        for seq in seq_list:
+            seq.get_input()
+
+        xs, ys = sequence_to_tensor(seq_list)
+        
+        with torch.no_grad():
+            pred = model(xs, ys)
+
+        metric = task.get_metric()
+        loss = metric(pred, ys).cpu().numpy()
+        loss_query = loss.mean(axis=0)[-1]
+
+        loss_list.append(loss_query)
+    
+    return loss_list
+
+def fs_select(model, xs, ys, beta, sample_list, b_size, n_labeled, set_size_list, use_approx=True):
+    n_points = xs.shape[1] - 1
+    n = len(sample_list)
+    print(n)
+    pos_index = torch.zeros(n, n)
+    seq_list = []
+    for i in range(xs.shape[0]):
+        seq_list.append(Input_sequence(xs[i], ys[i], n_labeled, beta[i], i))
+
+    # init select index for query in each sequence
+    loss_list = []
+    loss_list_infer = []
+    max_points = np.max(set_size_list)
+    sub_sample_list = [[] for _ in range(b_size)]
+    sub_sample_index = [[] for _ in range(b_size)]
+    sub_sample_list_infer = [[] for _ in range(b_size)]
+    sub_sample_index_infer = [[] for _ in range(b_size)]
+    select_index = 0
+    for k in range(1, max_points+1):
+        for i in range(b_size):
+            sub_seq_list = []
+            n_val = 5
+            i_seq = copy.deepcopy(seq_list[i])
+            i_seq.get_input(last_prompt=True)
+            #sub_seq.get_input(query_range=n_val)
+            xs, ys = sequence_to_tensor([i_seq])
+            pred_0, embeds_0 = model.forward_with_embeds(xs, ys)
+            grad = torch.autograd.grad(pred_0[0, -1], embeds_0, retain_graph=True, create_graph=True)[0]
+            grad = grad[:, 0::2, :]
+            grad_0 = grad[:, -1, :]
+            embeds_0 = embeds_0[:, 0::2, :]
+
+            metric = task.get_metric()
+
+            delta_x = []
+            for j in range(n):
+                if j in sub_sample_index[i]:
+                    continue
+                sub_seq = copy.deepcopy(seq_list[i])
+
+                sub_seq.add_sample(sample_list[j])
+                sub_seq.get_input(last_prompt=True)
+
+                sub_seq_list.append(sub_seq)
+
+            sub_xs, sub_ys = sequence_to_tensor(sub_seq_list)
+            embeds = model.embed_x(sub_xs)
+            delta_embeds = embeds[:, -1, :] - embeds[:, -2, :]
+
+            delta_term = torch.sum(grad_0 * delta_embeds, dim=1, keepdim=True)
+
+            approx_pred = delta_term + pred_0[0, -1]
+
+            xs, ys = sequence_to_tensor(sub_seq_list)
+            with torch.no_grad():
+                pred = model(xs, ys)
+
+            metric = task.get_metric()
+            loss_infer = metric(pred, ys)
+            loss_approx = metric(approx_pred, ys)
+
+            if use_approx:
+                score = loss_approx[:, -1]
+            else:
+                score = loss_infer[:, -1]
+
+            #score = score_infer
+            select_index = torch.argmin(score)
+            sub_sample_index[i].append(select_index)
+            sub_sample_list[i].append(sample_list[select_index])
+            seq_list[i].add_sample(sample_list[select_index])
+
+            print(sub_sample_index[i])
+            if k in set_size_list:
+                seq_list[i].get_input()
+        if k in set_size_list:
+            # get the input tensor
+            xs, ys = sequence_to_tensor(seq_list)
+            with torch.no_grad():
+                pred = model(xs, ys)
+            metric = task.get_metric()
+            loss = metric(pred, ys).cpu().numpy()
+            loss_query = loss.mean(axis=0)[-1]
+            #print(loss_query)
+            loss_list.append(loss_query)
+
+    return loss_list
 
 class Sample():
     def __init__(self, x, y, c, beta):
@@ -84,189 +276,6 @@ def sequence_to_tensor(seq_list):
     ys = torch.stack([s.input_y for s in seq_list], dim=0)
     return xs, ys
 
-run_dir = "../models"
-
-
-
-task = "linear_regression"
-#task = "sparse_linear_regression"
-#task = "decision_tree"
-#task = "relu_2nn_regression"
-
-run_id = "pretrained"  # if you train more models, replace with the run_id from the table above
-
-run_path = os.path.join(run_dir, task, run_id)
-recompute_metrics = False
-print(run_path)
-if recompute_metrics:
-    get_run_metrics(run_path)  # these are normally precomputed at the end of training
-
-model, conf = get_model_from_run(run_path)
-
-n_dims = conf.model.n_dims
-batch_size = conf.training.batch_size
-
-data_sampler = get_data_sampler(conf.training.data, n_dims)
-task_sampler = get_task_sampler(
-    conf.training.task,
-    n_dims,
-    batch_size,
-    **conf.training.task_kwargs
-)
-
-def predict_full_label(model, xs, ys, labels):
-    with torch.no_grad():
-        pred = model(xs, ys)
-    metric = task.get_metric()
-    loss = metric(pred, labels).cpu().numpy()
-
-    return pred, loss.mean(axis=0)
-
-import torch.nn.functional as F
-import copy
-from datetime import datetime
-
-device = 'cuda:1'
-model = model.to(device)
-
-model.eval()
-n_total = 41
-n_labeled = 25
-n_dims = conf.model.n_dims
-#b_size = conf.training.batch_size
-b_size = 50
-ratio = n_total // n_labeled
-
-n_unlabeled = n_total - n_labeled
-runs = 1
-loss_full_label_list = []
-loss_random_list = []
-loss_beta_list = []
-loss_loss_list = []
-loss_contrastive_list = []
-loss_fs_inference_list = []
-loss_fs_estimate_list = []
-
-def random_select(model, xs, ys, beta, sample_list, n_labeled, set_size_list):
-    loss_list = []
-    for set_size in set_size_list:
-        seq_list = []
-        for i in range(xs.shape[0]):
-            seq_list.append(Input_sequence(xs[i], ys[i], n_labeled, beta[i], i))
-
-        for i in range(xs.shape[0]):
-            for j in range(set_size):
-                select_index = torch.randint(0, len(sample_list), (1,))
-                seq_list[i].add_sample(sample_list[select_index])
-
-        for seq in seq_list:
-            seq.get_input()
-
-        xs, ys = sequence_to_tensor(seq_list)
-        
-        with torch.no_grad():
-            pred = model(xs, ys)
-
-        metric = task.get_metric()
-        loss = metric(pred, ys).cpu().numpy()
-        loss_query = loss.mean(axis=0)[-1]
-
-        loss_list.append(loss_query)
-    
-    return loss_list
-
-def fs_select(model, xs, ys, beta, sample_list, b_size, n_labeled, set_size_list, use_approx=True):
-    n_points = xs.shape[1] - 1
-    n = len(sample_list)
-    print(n)
-    pos_index = torch.zeros(n, n)
-    seq_list = []
-    for i in range(xs.shape[0]):
-        seq_list.append(Input_sequence(xs[i], ys[i], n_labeled, beta[i], i))
-
-    # init select index for query in each sequence
-    loss_list = []
-    loss_list_infer = []
-    max_points = np.max(set_size_list)
-    sub_sample_list = [[] for _ in range(b_size)]
-    sub_sample_index = [[] for _ in range(b_size)]
-    sub_sample_list_infer = [[] for _ in range(b_size)]
-    sub_sample_index_infer = [[] for _ in range(b_size)]
-    select_index = 0
-    b_size = 5
-    seq_list = seq_list[:b_size]
-    for k in range(1, max_points+1):
-        for i in range(b_size):
-            sub_seq_list = []
-            n_val = 5
-            i_seq = copy.deepcopy(seq_list[i])
-            i_seq.get_input(last_prompt=True)
-            #sub_seq.get_input(query_range=n_val)
-            xs, ys = sequence_to_tensor([i_seq])
-            pred_0, embeds_0 = model.forward_with_embeds(xs, ys)
-            grad = torch.autograd.grad(pred_0[0, -1], embeds_0, retain_graph=True, create_graph=True)[0]
-            grad = grad[:, 0::2, :]
-            grad_0 = grad[:, -1, :]
-            embeds_0 = embeds_0[:, 0::2, :]
-
-            metric = task.get_metric()
-
-            delta_x = []
-            for j in range(n):
-                if j in sub_sample_index[i]:
-                    continue
-                sub_seq = copy.deepcopy(seq_list[i])
-
-                sub_seq.add_sample(sample_list[j])
-                sub_seq.get_input(last_prompt=True)
-
-                sub_seq_list.append(sub_seq)
-
-            sub_xs, sub_ys = sequence_to_tensor(sub_seq_list)
-            embeds = model.embed_x(sub_xs)
-            delta_embeds = embeds[:, -1, :] - embeds[:, -2, :]
-
-            delta_term = torch.sum(grad_0 * delta_embeds, dim=1, keepdim=True)
-
-            approx_pred = delta_term + pred_0[0, -1]
-
-            xs, ys = sequence_to_tensor(sub_seq_list)
-            with torch.no_grad():
-                pred = model(xs, ys)
-
-            metric = task.get_metric()
-            loss_infer = metric(pred, ys)
-            loss_approx = metric(approx_pred, ys)
-
-            if use_approx:
-                score = loss_approx[:, -1]
-            else:
-                score = loss_infer[:, -1]
-
-            #score = score_infer
-            select_index = torch.argmin(score)
-            sub_sample_index[i].append(select_index)
-            sub_sample_list[i].append(sample_list[select_index])
-            seq_list[i].add_sample(sample_list[select_index])
-
-            print(sub_sample_index[i])
-            if k in set_size_list:
-                seq_list[i].get_input()
-        if k in set_size_list:
-            # get the input tensor
-            xs, ys = sequence_to_tensor(seq_list)
-            with torch.no_grad():
-                pred = model(xs, ys)
-            metric = task.get_metric()
-            loss = metric(pred, ys).cpu().numpy()
-            loss_query = loss.mean(axis=0)[-1]
-            #print(loss_query)
-            loss_list.append(loss_query)
-
-    return loss_list
-
-
-
 
 def generate_synthetic_data(num_sequences=100, n_points=10, x_dim=8, diff_diftribution=False, alpha=0.9):
     xs_b = torch.randn(num_sequences, n_points, x_dim)
@@ -290,7 +299,7 @@ def generate_orthogonal_matrix(n, m):
     Q, _ = torch.linalg.qr(A.T)  # QR decomposition on the transpose
     return Q.T  # Transpose back to get row-wise orthogonality
 
-runs = 1
+runs = 3
 for run in range(runs):
     task = task_sampler()
     xs = generate_synthetic_data(num_sequences=b_size, n_points=n_total, x_dim=n_dims, diff_diftribution=False, alpha=0.0)
@@ -344,26 +353,16 @@ for i in set_size_list:
 x = np.array(x)
 print(x)
 
-#plt.plot(x, np.mean(loss_loss_list, axis=0), lw=2, label="loss")
-#plt.fill_between(x, np.mean(loss_loss_list, axis=0)-np.std(loss_loss_list, axis=0), np.mean(loss_loss_list, axis=0)+np.std(loss_loss_list, axis=0), alpha=0.2)
-
-#plt.plot(x, np.mean(loss_random_list, axis=0), lw=2, label="random")
-#plt.fill_between(x, np.mean(loss_random_list, axis=0)-np.std(loss_random_list, axis=0), np.mean(loss_random_list, axis=0)+np.std(loss_random_list, axis=0), alpha=0.2)
-#plt.plot(x, np.mean(loss_beta_list, axis=0), lw=2, label="beta")
-#plt.fill_between(x, np.mean(loss_beta_list, axis=0)-np.std(loss_beta_list, axis=0), np.mean(loss_beta_list, axis=0)+np.std(loss_beta_list, axis=0), alpha=0.2)
-#plt.plot(x, np.mean(loss_contrastive_list, axis=0), lw=2, label="contrastive")
-#plt.fill_between(x, np.mean(loss_contrastive_list, axis=0)-np.std(loss_contrastive_list, axis=0), np.mean(loss_contrastive_list, axis=0)+np.std(loss_contrastive_list, axis=0), alpha=0.2)
+plt.plot(x, np.mean(loss_random_list, axis=0), lw=2, label="random")
+plt.fill_between(x, np.mean(loss_random_list, axis=0)-np.std(loss_random_list, axis=0), np.mean(loss_random_list, axis=0)+np.std(loss_random_list, axis=0), alpha=0.2)
 
 plt.plot(x, np.mean(loss_fs_inference_list, axis=0), lw=2, label="inference")
 plt.fill_between(x, np.mean(loss_fs_inference_list, axis=0)-np.std(loss_fs_inference_list, axis=0), np.mean(loss_fs_inference_list, axis=0)+np.std(loss_fs_inference_list, axis=0), alpha=0.2)
 plt.plot(x, np.mean(loss_fs_estimate_list, axis=0), lw=2, label="estimate")
 plt.fill_between(x, np.mean(loss_fs_estimate_list, axis=0)-np.std(loss_fs_estimate_list, axis=0), np.mean(loss_fs_estimate_list, axis=0)+np.std(loss_fs_estimate_list, axis=0), alpha=0.2)
 
+np.savez("./results/LR.npz", x=x, loss_full_label_list=loss_full_label_list, loss_fs_estimate_list=loss_fs_estimate_list, loss_fs_inference_list=loss_fs_inference_list, loss_random_list=loss_random_list)
 
-#plt.plot(loss_full_label, lw=2, label="Full label")
-#plt.plot(loss_unlabeled_once, lw=2, label="Unlabeled once")
-#plt.plot(loss_unlabeled_iter, lw=2, label="Unlabeled iter")
-#plt.plot(loss_unlabeled_stepbystep, lw=2, label="Unlabeled step by step")
 plt.xlabel("# in-context examples")
 plt.ylabel("squared error")
 plt.legend()
