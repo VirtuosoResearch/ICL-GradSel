@@ -33,7 +33,7 @@ python main.py --dataset {dataset} --model {model key} --method direct --do_zero
 
 4. Examples.
 
-For the linear-regression task, we provide the [usage file](./linear_regression/README.md) as an example.
+For the linear-regression task, we provide the [usage file](./examples/linear_regression/README.md) as an example.
 
 Then, we provide an example of running GradRE on SST-2 dataset.
 ```bash
