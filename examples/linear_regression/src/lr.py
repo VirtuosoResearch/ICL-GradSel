@@ -353,15 +353,8 @@ for i in set_size_list:
 x = np.array(x)
 print(x)
 
-#plt.plot(x, np.mean(loss_loss_list, axis=0), lw=2, label="loss")
-#plt.fill_between(x, np.mean(loss_loss_list, axis=0)-np.std(loss_loss_list, axis=0), np.mean(loss_loss_list, axis=0)+np.std(loss_loss_list, axis=0), alpha=0.2)
-
 plt.plot(x, np.mean(loss_random_list, axis=0), lw=2, label="random")
 plt.fill_between(x, np.mean(loss_random_list, axis=0)-np.std(loss_random_list, axis=0), np.mean(loss_random_list, axis=0)+np.std(loss_random_list, axis=0), alpha=0.2)
-#plt.plot(x, np.mean(loss_beta_list, axis=0), lw=2, label="beta")
-#plt.fill_between(x, np.mean(loss_beta_list, axis=0)-np.std(loss_beta_list, axis=0), np.mean(loss_beta_list, axis=0)+np.std(loss_beta_list, axis=0), alpha=0.2)
-#plt.plot(x, np.mean(loss_contrastive_list, axis=0), lw=2, label="contrastive")
-#plt.fill_between(x, np.mean(loss_contrastive_list, axis=0)-np.std(loss_contrastive_list, axis=0), np.mean(loss_contrastive_list, axis=0)+np.std(loss_contrastive_list, axis=0), alpha=0.2)
 
 plt.plot(x, np.mean(loss_fs_inference_list, axis=0), lw=2, label="inference")
 plt.fill_between(x, np.mean(loss_fs_inference_list, axis=0)-np.std(loss_fs_inference_list, axis=0), np.mean(loss_fs_inference_list, axis=0)+np.std(loss_fs_inference_list, axis=0), alpha=0.2)
@@ -370,10 +363,6 @@ plt.fill_between(x, np.mean(loss_fs_estimate_list, axis=0)-np.std(loss_fs_estima
 
 np.savez("./results/LR.npz", x=x, loss_full_label_list=loss_full_label_list, loss_fs_estimate_list=loss_fs_estimate_list, loss_fs_inference_list=loss_fs_inference_list, loss_random_list=loss_random_list)
 
-#plt.plot(loss_full_label, lw=2, label="Full label")
-#plt.plot(loss_unlabeled_once, lw=2, label="Unlabeled once")
-#plt.plot(loss_unlabeled_iter, lw=2, label="Unlabeled iter")
-#plt.plot(loss_unlabeled_stepbystep, lw=2, label="Unlabeled step by step")
 plt.xlabel("# in-context examples")
 plt.ylabel("squared error")
 plt.legend()

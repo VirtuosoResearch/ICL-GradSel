@@ -40,3 +40,7 @@ my*
 __pycache__
 models.zip
 models
+
+*.egg-info
+
+*.DS_Store

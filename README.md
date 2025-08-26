@@ -1,7 +1,7 @@
 # Linear-Time Demonstration Selection for In-Context Learning via Gradient Estimation
 - Authors: [Ziniu Zhang](https://ziniuzhang.github.io/), [Zhenshuo Zhang](https://zhenshuozhang.github.io/), [Dongyue Li](https://lidongyue12138.github.io/), [Lu Wang](https://web.eecs.umich.edu/~wangluxy/), [Jennifer Dy](https://mllabneu.github.io/) and [Hongyang R. Zhang](https://www.hongyangzhang.com/).
 
-
+![pipeline](./gradsel_pipeline.png)
 
 ## Usage
 Here are the procedure to implement our work:
@@ -24,11 +24,11 @@ python ./utils/get_feature.py --task {task} --model {model key}
 3. Commands to run inferences.
 ```bash
 # GradRE
-python test.py --dataset {dataset} --gpt2 {model key} --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k {number} --num_anchors {number} --estim
+python main.py --dataset {dataset} --model {model key} --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k {number} --num_anchors {number} --estim
 # GradFS
-python test.py --dataset {dataset} --gpt2 {model key} --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k {number} --forsel
+python main.py --dataset {dataset} --model {model key} --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k {number} --forsel
 # GradCE
-python test.py --dataset {dataset} --gpt2 {model key} --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k {number} --gradestim
+python main.py --dataset {dataset} --model {model key} --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k {number} --gradestim
 ```
 
 4. Examples.
@@ -37,7 +37,7 @@ For the linear-regression task, we provide the [usage file](./linear_regression/
 
 Then, we provide an example of running GradRE on SST-2 dataset.
 ```bash
-python test.py --dataset sst2 --gpt2 deepseek-ai/deepseek-llm-7b-chat --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k 8 --ranens
+python main.py --dataset sst2 --model deepseek-ai/deepseek-llm-7b-chat --method direct --do_zeroshot --test_batch_size 4 --use_demonstrations  --seed 0 --k 8 --ranens
 ```
 The output is the F1-score of our method.
 
